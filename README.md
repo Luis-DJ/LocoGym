@@ -1,6 +1,6 @@
 # LocoGym
 
-**v0.5.0-dev** — No account. No cloud. No nonsense.
+**v0.5.1-dev** — No account. No cloud. No nonsense.
 
 LocoGym is a deliberately small, private Android workout tracker. It stores reusable workouts, imports them from JSON, records complete or partial sessions, and provides a configurable in-app rest timer.
 

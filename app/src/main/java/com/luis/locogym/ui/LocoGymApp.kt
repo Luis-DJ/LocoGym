@@ -230,7 +230,7 @@ private fun HomeScreen(
                 modifier = Modifier.weight(1f)
             )
         }
-        Text("v0.5.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.5.1-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
 }
