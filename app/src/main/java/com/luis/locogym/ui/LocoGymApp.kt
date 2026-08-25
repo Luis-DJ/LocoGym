@@ -1,10 +1,18 @@
 package com.luis.locogym.ui
 
-import android.media.AudioManager
+import android.content.Context
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.media.ToneGenerator
+import android.media.AudioManager
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -14,6 +22,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -29,8 +39,10 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private enum class HomeSection { TEMPLATES, HISTORY }
+private enum class AlertMode { SOUND, VIBRATION, BOTH }
 
 private data class ExerciseDraft(
     val name: String = "",
@@ -58,6 +70,15 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
     val sessionHistory by viewModel.sessionHistory.collectAsStateWithLifecycle()
     val importMessage by viewModel.importMessage.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("locogym_settings", Context.MODE_PRIVATE) }
+    var alertMode by rememberSaveable {
+        mutableStateOf(
+            runCatching { AlertMode.valueOf(preferences.getString("alert_mode", AlertMode.BOTH.name)!!) }
+                .getOrDefault(AlertMode.BOTH)
+        )
+    }
+    var showAlertSettings by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         runCatching {
@@ -76,6 +97,7 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
             if (activeWorkout != null) {
                 ActiveWorkoutScreen(
                     workout = activeWorkout!!,
+                    alertMode = alertMode,
                     onCancel = { activeWorkout = null },
                     onFinish = { startedAt, completed ->
                         viewModel.finishSession(
@@ -109,9 +131,21 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                     onStartWorkout = { activeWorkout = it },
                     onImportTemplates = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     importMessage = importMessage,
-                    onDismissImportMessage = viewModel::clearImportMessage
+                    onDismissImportMessage = viewModel::clearImportMessage,
+                    onAlertSettings = { showAlertSettings = true }
                 )
             }
+        }
+        if (showAlertSettings) {
+            AlertSettingsDialog(
+                selected = alertMode,
+                onSelect = { mode ->
+                    alertMode = mode
+                    preferences.edit().putString("alert_mode", mode.name).apply()
+                },
+                onTest = { scope.launch { playRestAlert(context, alertMode) } },
+                onDismiss = { showAlertSettings = false }
+            )
         }
     }
 }
@@ -128,12 +162,20 @@ private fun HomeScreen(
     onStartWorkout: (TemplateWithExercises) -> Unit,
     onImportTemplates: () -> Unit,
     importMessage: String?,
-    onDismissImportMessage: () -> Unit
+    onDismissImportMessage: () -> Unit,
+    onAlertSettings: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(36.dp))
         Text("LocoGym", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text("No account. No cloud. No nonsense.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                "No account. No cloud. No nonsense.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onAlertSettings) { Text("Timer alert") }
+        }
         Spacer(Modifier.height(18.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
@@ -165,7 +207,7 @@ private fun HomeScreen(
                 modifier = Modifier.weight(1f)
             )
         }
-        Text("v0.4.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.4.1-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -372,9 +414,13 @@ private fun ExerciseDraftEditor(
 @Composable
 private fun ActiveWorkoutScreen(
     workout: TemplateWithExercises,
+    alertMode: AlertMode,
     onCancel: () -> Unit,
     onFinish: (Long, List<CompletedExerciseInput>) -> Unit
 ) {
+    val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val startedAt = remember(workout.template.id) { System.currentTimeMillis() }
     var runs by remember(workout.template.id) {
         mutableStateOf(workout.orderedExercises.map { exercise ->
@@ -391,16 +437,13 @@ private fun ActiveWorkoutScreen(
     }
     var timerRemaining by rememberSaveable(workout.template.id) { mutableIntStateOf(0) }
     var timerRunning by rememberSaveable(workout.template.id) { mutableStateOf(false) }
-    val tone = remember { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85) }
-    DisposableEffect(Unit) { onDispose { tone.release() } }
-
     LaunchedEffect(timerRunning, timerRemaining) {
         if (timerRunning && timerRemaining > 0) {
             delay(1_000)
             timerRemaining -= 1
         } else if (timerRunning) {
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 700)
             timerRunning = false
+            playRestAlert(context, alertMode)
         }
     }
 
@@ -408,7 +451,13 @@ private fun ActiveWorkoutScreen(
     val totalCount = runs.sumOf { it.sets.size }
     val allComplete = totalCount > 0 && completedCount == totalCount
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 16.dp)
+    ) {
         Spacer(Modifier.height(32.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -418,20 +467,27 @@ private fun ActiveWorkoutScreen(
             TextButton(onClick = onCancel) { Text("Cancel") }
         }
 
-        if (timerRunning || timerRemaining > 0) {
-            Card(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-                Row(
-                    Modifier.fillMaxWidth().padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text("Rest", style = MaterialTheme.typography.labelLarge)
-                        Text(formatTimer(timerRemaining), style = MaterialTheme.typography.headlineMedium)
-                    }
-                    Row {
-                        TextButton(onClick = { timerRemaining += 30 }) { Text("+30s") }
-                        TextButton(onClick = { timerRunning = false; timerRemaining = 0 }) { Text("Skip") }
-                    }
+        Card(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text("Rest timer", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        if (timerRunning || timerRemaining > 0) formatTimer(timerRemaining) else "Ready",
+                        style = MaterialTheme.typography.headlineMedium
+                    )
+                }
+                Row {
+                    TextButton(
+                        enabled = timerRunning || timerRemaining > 0,
+                        onClick = { timerRemaining += 30 }
+                    ) { Text("+30s") }
+                    TextButton(
+                        enabled = timerRunning || timerRemaining > 0,
+                        onClick = { timerRunning = false; timerRemaining = 0 }
+                    ) { Text("Skip") }
                 }
             }
         }
@@ -450,6 +506,8 @@ private fun ActiveWorkoutScreen(
                         )
                         OutlinedButton(
                             onClick = {
+                                focusManager.clearFocus(force = true)
+                                keyboardController?.hide()
                                 timerRemaining = run.exercise.restSeconds
                                 timerRunning = true
                             },
@@ -480,6 +538,8 @@ private fun ActiveWorkoutScreen(
                                 Button(
                                     enabled = valid && set.completedAt == null,
                                     onClick = {
+                                        focusManager.clearFocus(force = true)
+                                        keyboardController?.hide()
                                         runs = runs.updateSet(
                                             exerciseIndex,
                                             setIndex,
@@ -566,6 +626,87 @@ private fun HistoryScreen(
                 Text("Earlier quick records", style = MaterialTheme.typography.titleMedium)
             }
             items(legacyEntries, key = { "legacy-${it.id}" }) { EntryCard(it) }
+        }
+    }
+}
+
+@Composable
+private fun AlertSettingsDialog(
+    selected: AlertMode,
+    onSelect: (AlertMode) -> Unit,
+    onTest: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rest timer alert") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Choose how LocoGym alerts you when rest time ends.")
+                AlertMode.entries.forEach { mode ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(mode) }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = selected == mode, onClick = { onSelect(mode) })
+                        Text(
+                            when (mode) {
+                                AlertMode.SOUND -> "Sound"
+                                AlertMode.VIBRATION -> "Vibration"
+                                AlertMode.BOTH -> "Sound and vibration"
+                            }
+                        )
+                    }
+                }
+                Text(
+                    "Sound uses the phone's alarm volume.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        dismissButton = { TextButton(onClick = onTest) { Text("Test alert") } }
+    )
+}
+
+private suspend fun playRestAlert(context: Context, mode: AlertMode) {
+    if (mode == AlertMode.VIBRATION || mode == AlertMode.BOTH) {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+        vibrator?.vibrate(
+            VibrationEffect.createWaveform(longArrayOf(0, 400, 150, 400, 150, 600), -1)
+        )
+    }
+
+    if (mode == AlertMode.SOUND || mode == AlertMode.BOTH) {
+        val played = runCatching {
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: return@runCatching false
+            val ringtone = RingtoneManager.getRingtone(context, uri)
+                ?: return@runCatching false
+            ringtone.audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            ringtone.play()
+            delay(2_500)
+            ringtone.stop()
+            true
+        }.getOrDefault(false)
+
+        if (!played) {
+            val tone = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+            tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 1_800)
+            delay(1_900)
+            tone.release()
         }
     }
 }
