@@ -1,0 +1,69 @@
+{
+  "formatVersion": 1,
+  "workoutTemplates": [
+    {
+      "name": "Upper Body",
+      "description": "Chest, back, shoulders and arms",
+      "exercises": [
+        {
+          "name": "Dumbbell Seated Shoulder Press",
+          "targetWeightKg": 7,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 90
+        },
+        {
+          "name": "Neutral Grip Lat Pulldown",
+          "targetWeightKg": 40,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 90
+        },
+        {
+          "name": "Dumbbel Bench Press",
+          "targetWeightKg": 17.5,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+        {
+          "name": "Cable Seated Row",
+          "targetWeightKg": 40,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+        {
+          "name": "Machine Seated Chest Fly",
+          "targetWeightKg": 35,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+
+        {
+          "name": "Cable V Bar Tricep Pushdown",
+          "targetWeightKg": 17,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+        {
+          "name": "Standing Cable Flat Bar Biceps",
+          "targetWeightKg": 15,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+        {
+          "name": "Palloff Press",
+          "targetWeightKg": 20,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        }
+
+      ]
+    }
+  ]
+}

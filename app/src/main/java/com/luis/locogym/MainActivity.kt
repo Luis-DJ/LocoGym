@@ -10,7 +10,7 @@ import com.luis.locogym.ui.LocoGymApp
 
 class MainActivity : ComponentActivity() {
     private val viewModel: LocoGymViewModel by viewModels {
-        LocoGymViewModel.Factory(LocoGymDatabase.getInstance(this).exerciseDao())
+        LocoGymViewModel.Factory(LocoGymDatabase.getInstance(this))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
