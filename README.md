@@ -1,6 +1,6 @@
 # LocoGym
 
-**v0.4.2-dev** — No account. No cloud. No nonsense.
+**v0.5.0-dev** — No account. No cloud. No nonsense.
 
 LocoGym is a deliberately small, private Android workout tracker. It stores reusable workouts, imports them from JSON, records complete or partial sessions, and provides a configurable in-app rest timer.
 
@@ -13,13 +13,13 @@ LocoGym is a deliberately small, private Android workout tracker. It stores reus
 
 ## Verify this milestone
 
-1. Start a short rest timer and confirm its sound and vibration stop automatically.
-2. Start a workout and complete only some planned sets.
-3. Choose **Finish workout**, review the partial-workout warning, and select **Finish and save**.
-4. Confirm History labels that session **Partial** and records only the completed sets.
-5. Complete every set in another workout and confirm History labels it **Completed**.
+1. Open **My Workouts** and confirm each workout appears as a compact illustrated summary.
+2. Tap a workout and review its description and complete exercise list.
+3. Confirm the trial illustrations appear for shoulder press, leg press, and neutral-grip lat pulldown; other exercises use a placeholder.
+4. Start and edit a workout from its detail page.
+5. Confirm home, workout details, active workout, and workout editor controls remain above Android's navigation bar and keyboard.
 
-The timer runs while LocoGym is open. Unfinished active sessions do not yet survive force-closing the app.
+The generated illustrations are bundled locally and require no network access. They are identification aids, not coaching or medical instructions.
 
 ## Privacy baseline
 
@@ -35,4 +35,4 @@ Uninstalling the app removes its local data.
 
 ## Scope
 
-This milestone supports reusable workouts, offline JSON import, actual set recording, configurable foreground rest alerts, complete and partial session snapshots, and history summaries. Background timer notifications, active-session recovery, session-detail screens, charts, export, and backup are not included yet.
+This milestone adds compact workout summaries, a dedicated workout detail page, local generated cover art, and a trial set of exercise thumbnails. Remaining exercises intentionally use placeholders until the illustration style is validated.

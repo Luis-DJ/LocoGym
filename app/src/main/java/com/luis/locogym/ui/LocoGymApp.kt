@@ -13,6 +13,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,6 +23,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -29,6 +36,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luis.locogym.LocoGymViewModel
+import com.luis.locogym.R
 import com.luis.locogym.data.ExerciseEntry
 import com.luis.locogym.data.CompletedExerciseInput
 import com.luis.locogym.data.CompletedSetInput
@@ -91,6 +99,7 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
     var editing by remember { mutableStateOf<TemplateWithExercises?>(null) }
     var editorOpen by rememberSaveable { mutableStateOf(false) }
     var activeWorkout by remember { mutableStateOf<TemplateWithExercises?>(null) }
+    var viewedWorkout by remember { mutableStateOf<TemplateWithExercises?>(null) }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -120,6 +129,17 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                         editorOpen = false
                     }
                 )
+            } else if (viewedWorkout != null) {
+                WorkoutDetailScreen(
+                    workout = viewedWorkout!!,
+                    onBack = { viewedWorkout = null },
+                    onStart = { activeWorkout = viewedWorkout },
+                    onEdit = {
+                        editing = viewedWorkout
+                        viewedWorkout = null
+                        editorOpen = true
+                    }
+                )
             } else {
                 HomeScreen(
                     section = section,
@@ -128,8 +148,7 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                     entries = entries,
                     sessionHistory = sessionHistory,
                     onNewTemplate = { editing = null; editorOpen = true },
-                    onEditTemplate = { editing = it; editorOpen = true },
-                    onStartWorkout = { activeWorkout = it },
+                    onOpenTemplate = { viewedWorkout = it },
                     onImportTemplates = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     importMessage = importMessage,
                     onDismissImportMessage = viewModel::clearImportMessage,
@@ -159,14 +178,18 @@ private fun HomeScreen(
     entries: List<ExerciseEntry>,
     sessionHistory: List<SessionSummary>,
     onNewTemplate: () -> Unit,
-    onEditTemplate: (TemplateWithExercises) -> Unit,
-    onStartWorkout: (TemplateWithExercises) -> Unit,
+    onOpenTemplate: (TemplateWithExercises) -> Unit,
     onImportTemplates: () -> Unit,
     importMessage: String?,
     onDismissImportMessage: () -> Unit,
     onAlertSettings: () -> Unit
 ) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp)
+    ) {
         Spacer(Modifier.height(36.dp))
         Text("LocoGym", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -195,8 +218,7 @@ private fun HomeScreen(
             HomeSection.TEMPLATES -> TemplateList(
                 templates = templates,
                 onNewTemplate = onNewTemplate,
-                onEditTemplate = onEditTemplate,
-                onStartWorkout = onStartWorkout,
+                onOpenTemplate = onOpenTemplate,
                 onImportTemplates = onImportTemplates,
                 importMessage = importMessage,
                 onDismissImportMessage = onDismissImportMessage,
@@ -208,7 +230,7 @@ private fun HomeScreen(
                 modifier = Modifier.weight(1f)
             )
         }
-        Text("v0.4.2-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.5.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -217,8 +239,7 @@ private fun HomeScreen(
 private fun TemplateList(
     templates: List<TemplateWithExercises>,
     onNewTemplate: () -> Unit,
-    onEditTemplate: (TemplateWithExercises) -> Unit,
-    onStartWorkout: (TemplateWithExercises) -> Unit,
+    onOpenTemplate: (TemplateWithExercises) -> Unit,
     onImportTemplates: () -> Unit,
     importMessage: String?,
     onDismissImportMessage: () -> Unit,
@@ -250,32 +271,164 @@ private fun TemplateList(
             }
         }
         items(templates, key = { it.template.id }) { item ->
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(item.template.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    if (item.template.description.isNotBlank()) {
-                        Text(item.template.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text(
-                        "${item.exercises.size} ${if (item.exercises.size == 1) "exercise" else "exercises"}",
-                        style = MaterialTheme.typography.labelLarge
+            Card(onClick = { onOpenTemplate(item) }, modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    WorkoutImage(
+                        resourceId = workoutCoverResource(item.template.name),
+                        contentDescription = "${item.template.name} workout illustration",
+                        modifier = Modifier.size(104.dp)
                     )
-                    item.orderedExercises.take(3).forEach { exercise ->
-                        val weight = exercise.targetWeightKg?.let { " @ ${it.clean()} kg" }.orEmpty()
-                        Text("${exercise.name} • ${exercise.targetSets} × ${exercise.targetReps}$weight • ${exercise.restSeconds}s rest")
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            item.template.name,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            item.template.description.ifBlank { "Reusable workout plan" },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
+                        )
+                        Text(
+                            "${item.exercises.size} ${if (item.exercises.size == 1) "exercise" else "exercises"}",
+                            style = MaterialTheme.typography.labelLarge
+                        )
                     }
-                    if (item.exercises.size > 3) Text("+ ${item.exercises.size - 3} more")
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onStartWorkout(item) }, modifier = Modifier.weight(1f)) {
-                            Text("Start workout")
-                        }
-                        OutlinedButton(onClick = { onEditTemplate(item) }) { Text("Edit") }
-                    }
+                    Text("›", style = MaterialTheme.typography.headlineMedium)
                 }
             }
         }
     }
+}
+
+@Composable
+private fun WorkoutDetailScreen(
+    workout: TemplateWithExercises,
+    onBack: () -> Unit,
+    onStart: () -> Unit,
+    onEdit: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp)
+    ) {
+        Spacer(Modifier.height(30.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = onBack) { Text("‹ My Workouts") }
+            TextButton(onClick = onEdit) { Text("Edit") }
+        }
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                WorkoutImage(
+                    resourceId = workoutCoverResource(workout.template.name),
+                    contentDescription = "${workout.template.name} workout illustration",
+                    modifier = Modifier.fillMaxWidth().height(210.dp)
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    workout.template.name,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (workout.template.description.isNotBlank()) {
+                    Text(
+                        workout.template.description,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    "${workout.exercises.size} ${if (workout.exercises.size == 1) "exercise" else "exercises"}",
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
+                    Text("Start workout")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Exercises", style = MaterialTheme.typography.titleLarge)
+            }
+            items(workout.orderedExercises, key = { it.id }) { exercise ->
+                Card(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        WorkoutImage(
+                            resourceId = exerciseImageResource(exercise.name),
+                            contentDescription = "${exercise.name} exercise illustration",
+                            fallbackText = exercise.name.take(1).uppercase(),
+                            modifier = Modifier.size(82.dp)
+                        )
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(exercise.name, fontWeight = FontWeight.SemiBold)
+                            val weight = exercise.targetWeightKg?.let { " @ ${it.clean()} kg" }.orEmpty()
+                            Text("${exercise.targetSets} × ${exercise.targetReps}$weight")
+                            Text(
+                                "${exercise.restSeconds}s rest",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(8.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutImage(
+    resourceId: Int?,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    fallbackText: String = "•"
+) {
+    val shape = RoundedCornerShape(16.dp)
+    if (resourceId != null) {
+        Image(
+            painter = painterResource(resourceId),
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier.clip(shape)
+        )
+    } else {
+        Box(
+            modifier = modifier
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                fallbackText,
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
+    }
+}
+
+private fun workoutCoverResource(name: String): Int = when {
+    name.contains("upper", ignoreCase = true) -> R.drawable.cover_upper_body
+    name.contains("leg", ignoreCase = true) || name.contains("lower", ignoreCase = true) -> R.drawable.cover_legs
+    else -> R.drawable.cover_full_body
+}
+
+private fun exerciseImageResource(name: String): Int? = when {
+    name.contains("shoulder press", ignoreCase = true) -> R.drawable.cover_upper_body
+    name.contains("leg press", ignoreCase = true) -> R.drawable.cover_legs
+    name.contains("lat pulldown", ignoreCase = true) -> R.drawable.exercise_lat_pulldown
+    else -> null
 }
 
 @Composable
@@ -303,7 +456,13 @@ private fun TemplateEditor(
             (it.restSeconds.toIntOrNull() ?: 0) in 1..3600
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 20.dp)
+    ) {
         Spacer(Modifier.height(36.dp))
         Text(
             if (existing == null) "New workout" else "Edit workout",
