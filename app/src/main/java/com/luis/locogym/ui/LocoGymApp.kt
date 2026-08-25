@@ -1,5 +1,7 @@
 package com.luis.locogym.ui
 
+import android.media.AudioManager
+import android.media.ToneGenerator
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -18,13 +20,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luis.locogym.LocoGymViewModel
 import com.luis.locogym.data.ExerciseEntry
+import com.luis.locogym.data.CompletedExerciseInput
+import com.luis.locogym.data.CompletedSetInput
+import com.luis.locogym.data.SessionSummary
 import com.luis.locogym.data.TemplateExercise
 import com.luis.locogym.data.TemplateWithExercises
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
 
-private enum class HomeSection { TEMPLATES, LOG }
+private enum class HomeSection { TEMPLATES, HISTORY }
 
 private data class ExerciseDraft(
     val name: String = "",
@@ -34,10 +40,22 @@ private data class ExerciseDraft(
     val restSeconds: String = "60"
 )
 
+private data class SetRun(
+    val weightKg: String,
+    val reps: String,
+    val completedAt: Long? = null
+)
+
+private data class ExerciseRun(
+    val exercise: TemplateExercise,
+    val sets: List<SetRun>
+)
+
 @Composable
 fun LocoGymApp(viewModel: LocoGymViewModel) {
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     val entries by viewModel.entries.collectAsStateWithLifecycle()
+    val sessionHistory by viewModel.sessionHistory.collectAsStateWithLifecycle()
     val importMessage by viewModel.importMessage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -51,10 +69,26 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
     var section by rememberSaveable { mutableStateOf(HomeSection.TEMPLATES) }
     var editing by remember { mutableStateOf<TemplateWithExercises?>(null) }
     var editorOpen by rememberSaveable { mutableStateOf(false) }
+    var activeWorkout by remember { mutableStateOf<TemplateWithExercises?>(null) }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            if (editorOpen) {
+            if (activeWorkout != null) {
+                ActiveWorkoutScreen(
+                    workout = activeWorkout!!,
+                    onCancel = { activeWorkout = null },
+                    onFinish = { startedAt, completed ->
+                        viewModel.finishSession(
+                            templateId = activeWorkout!!.template.id,
+                            workoutName = activeWorkout!!.template.name,
+                            startedAt = startedAt,
+                            exercises = completed
+                        )
+                        activeWorkout = null
+                        section = HomeSection.HISTORY
+                    }
+                )
+            } else if (editorOpen) {
                 TemplateEditor(
                     existing = editing,
                     onCancel = { editorOpen = false },
@@ -69,12 +103,13 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                     onSectionChange = { section = it },
                     templates = templates,
                     entries = entries,
+                    sessionHistory = sessionHistory,
                     onNewTemplate = { editing = null; editorOpen = true },
                     onEditTemplate = { editing = it; editorOpen = true },
+                    onStartWorkout = { activeWorkout = it },
                     onImportTemplates = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     importMessage = importMessage,
-                    onDismissImportMessage = viewModel::clearImportMessage,
-                    onSaveEntry = viewModel::save
+                    onDismissImportMessage = viewModel::clearImportMessage
                 )
             }
         }
@@ -87,12 +122,13 @@ private fun HomeScreen(
     onSectionChange: (HomeSection) -> Unit,
     templates: List<TemplateWithExercises>,
     entries: List<ExerciseEntry>,
+    sessionHistory: List<SessionSummary>,
     onNewTemplate: () -> Unit,
     onEditTemplate: (TemplateWithExercises) -> Unit,
+    onStartWorkout: (TemplateWithExercises) -> Unit,
     onImportTemplates: () -> Unit,
     importMessage: String?,
-    onDismissImportMessage: () -> Unit,
-    onSaveEntry: (String, Double, Int, Int) -> Unit
+    onDismissImportMessage: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(36.dp))
@@ -106,9 +142,9 @@ private fun HomeScreen(
                 label = { Text("My Workouts") }
             )
             FilterChip(
-                selected = section == HomeSection.LOG,
-                onClick = { onSectionChange(HomeSection.LOG) },
-                label = { Text("Workout log") }
+                selected = section == HomeSection.HISTORY,
+                onClick = { onSectionChange(HomeSection.HISTORY) },
+                label = { Text("History") }
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -117,14 +153,19 @@ private fun HomeScreen(
                 templates = templates,
                 onNewTemplate = onNewTemplate,
                 onEditTemplate = onEditTemplate,
+                onStartWorkout = onStartWorkout,
                 onImportTemplates = onImportTemplates,
                 importMessage = importMessage,
                 onDismissImportMessage = onDismissImportMessage,
                 modifier = Modifier.weight(1f)
             )
-            HomeSection.LOG -> WorkoutLog(entries, onSaveEntry, Modifier.weight(1f))
+            HomeSection.HISTORY -> HistoryScreen(
+                sessionHistory = sessionHistory,
+                legacyEntries = entries,
+                modifier = Modifier.weight(1f)
+            )
         }
-        Text("v0.3.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.4.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -134,6 +175,7 @@ private fun TemplateList(
     templates: List<TemplateWithExercises>,
     onNewTemplate: () -> Unit,
     onEditTemplate: (TemplateWithExercises) -> Unit,
+    onStartWorkout: (TemplateWithExercises) -> Unit,
     onImportTemplates: () -> Unit,
     importMessage: String?,
     onDismissImportMessage: () -> Unit,
@@ -165,7 +207,7 @@ private fun TemplateList(
             }
         }
         items(templates, key = { it.template.id }) { item ->
-            Card(onClick = { onEditTemplate(item) }, modifier = Modifier.fillMaxWidth()) {
+            Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(item.template.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     if (item.template.description.isNotBlank()) {
@@ -180,6 +222,13 @@ private fun TemplateList(
                         Text("${exercise.name} • ${exercise.targetSets} × ${exercise.targetReps}$weight • ${exercise.restSeconds}s rest")
                     }
                     if (item.exercises.size > 3) Text("+ ${item.exercises.size - 3} more")
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { onStartWorkout(item) }, modifier = Modifier.weight(1f)) {
+                            Text("Start workout")
+                        }
+                        OutlinedButton(onClick = { onEditTemplate(item) }) { Text("Edit") }
+                    }
                 }
             }
         }
@@ -319,6 +368,209 @@ private fun ExerciseDraftEditor(
         }
     }
 }
+
+@Composable
+private fun ActiveWorkoutScreen(
+    workout: TemplateWithExercises,
+    onCancel: () -> Unit,
+    onFinish: (Long, List<CompletedExerciseInput>) -> Unit
+) {
+    val startedAt = remember(workout.template.id) { System.currentTimeMillis() }
+    var runs by remember(workout.template.id) {
+        mutableStateOf(workout.orderedExercises.map { exercise ->
+            ExerciseRun(
+                exercise = exercise,
+                sets = List(exercise.targetSets) {
+                    SetRun(
+                        weightKg = exercise.targetWeightKg?.clean().orEmpty(),
+                        reps = exercise.targetReps.toString()
+                    )
+                }
+            )
+        })
+    }
+    var timerRemaining by rememberSaveable(workout.template.id) { mutableIntStateOf(0) }
+    var timerRunning by rememberSaveable(workout.template.id) { mutableStateOf(false) }
+    val tone = remember { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 85) }
+    DisposableEffect(Unit) { onDispose { tone.release() } }
+
+    LaunchedEffect(timerRunning, timerRemaining) {
+        if (timerRunning && timerRemaining > 0) {
+            delay(1_000)
+            timerRemaining -= 1
+        } else if (timerRunning) {
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 700)
+            timerRunning = false
+        }
+    }
+
+    val completedCount = runs.sumOf { run -> run.sets.count { it.completedAt != null } }
+    val totalCount = runs.sumOf { it.sets.size }
+    val allComplete = totalCount > 0 && completedCount == totalCount
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Spacer(Modifier.height(32.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text(workout.template.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text("$completedCount of $totalCount sets completed")
+            }
+            TextButton(onClick = onCancel) { Text("Cancel") }
+        }
+
+        if (timerRunning || timerRemaining > 0) {
+            Card(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text("Rest", style = MaterialTheme.typography.labelLarge)
+                        Text(formatTimer(timerRemaining), style = MaterialTheme.typography.headlineMedium)
+                    }
+                    Row {
+                        TextButton(onClick = { timerRemaining += 30 }) { Text("+30s") }
+                        TextButton(onClick = { timerRunning = false; timerRemaining = 0 }) { Text("Skip") }
+                    }
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            itemsIndexed(runs) { exerciseIndex, run ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(run.exercise.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Target ${run.exercise.targetSets} × ${run.exercise.targetReps}" +
+                                run.exercise.targetWeightKg?.let { " @ ${it.clean()} kg" }.orEmpty()
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                timerRemaining = run.exercise.restSeconds
+                                timerRunning = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Start ${run.exercise.restSeconds}s rest timer") }
+
+                        run.sets.forEachIndexed { setIndex, set ->
+                            val valid = set.reps.toIntOrNull()?.let { it > 0 } == true &&
+                                (set.weightKg.isBlank() || set.weightKg.toDoubleOrNull()?.let { it >= 0 } == true)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("${setIndex + 1}", modifier = Modifier.padding(top = 18.dp))
+                                DecimalField(
+                                    "kg",
+                                    set.weightKg,
+                                    { value ->
+                                        runs = runs.updateSet(exerciseIndex, setIndex, set.copy(weightKg = value))
+                                    },
+                                    Modifier.weight(1f)
+                                )
+                                IntegerField(
+                                    "reps",
+                                    set.reps,
+                                    { value ->
+                                        runs = runs.updateSet(exerciseIndex, setIndex, set.copy(reps = value))
+                                    },
+                                    Modifier.weight(1f)
+                                )
+                                Button(
+                                    enabled = valid && set.completedAt == null,
+                                    onClick = {
+                                        runs = runs.updateSet(
+                                            exerciseIndex,
+                                            setIndex,
+                                            set.copy(completedAt = System.currentTimeMillis())
+                                        )
+                                        timerRemaining = run.exercise.restSeconds
+                                        timerRunning = true
+                                    },
+                                    modifier = Modifier.padding(top = 7.dp)
+                                ) { Text(if (set.completedAt == null) "Done" else "✓") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Button(
+            enabled = allComplete,
+            onClick = {
+                onFinish(startedAt, runs.mapIndexed { index, run ->
+                    CompletedExerciseInput(
+                        name = run.exercise.name,
+                        plannedWeightKg = run.exercise.targetWeightKg,
+                        targetSets = run.exercise.targetSets,
+                        targetReps = run.exercise.targetReps,
+                        restSeconds = run.exercise.restSeconds,
+                        position = index,
+                        sets = run.sets.map { set ->
+                            CompletedSetInput(
+                                weightKg = set.weightKg.toDoubleOrNull(),
+                                reps = set.reps.toInt(),
+                                completedAt = set.completedAt!!
+                            )
+                        }
+                    )
+                })
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Finish workout") }
+        Spacer(Modifier.height(18.dp))
+    }
+}
+
+private fun List<ExerciseRun>.updateSet(
+    exerciseIndex: Int,
+    setIndex: Int,
+    value: SetRun
+): List<ExerciseRun> = toMutableList().also { exercises ->
+    val run = exercises[exerciseIndex]
+    exercises[exerciseIndex] = run.copy(
+        sets = run.sets.toMutableList().also { it[setIndex] = value }
+    )
+}
+
+@Composable
+private fun HistoryScreen(
+    sessionHistory: List<SessionSummary>,
+    legacyEntries: List<ExerciseEntry>,
+    modifier: Modifier = Modifier
+) {
+    val formatter = remember { DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a") }
+    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { Text("Completed workouts", style = MaterialTheme.typography.titleLarge) }
+        if (sessionHistory.isEmpty()) {
+            item { Text("Finished workouts will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        items(sessionHistory, key = { "session-${it.id}" }) { session ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(session.workoutName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("${session.exerciseCount} exercises • ${session.setCount} sets")
+                    Text(
+                        Instant.ofEpochMilli(session.completedAt).atZone(ZoneId.systemDefault()).format(formatter),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        if (legacyEntries.isNotEmpty()) {
+            item {
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text("Earlier quick records", style = MaterialTheme.typography.titleMedium)
+            }
+            items(legacyEntries, key = { "legacy-${it.id}" }) { EntryCard(it) }
+        }
+    }
+}
+
+private fun formatTimer(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)
 
 @Composable
 private fun WorkoutLog(

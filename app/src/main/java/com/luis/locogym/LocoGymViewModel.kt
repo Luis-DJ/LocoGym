@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.luis.locogym.data.ExerciseEntry
+import com.luis.locogym.data.CompletedExerciseInput
 import com.luis.locogym.data.LocoGymDatabase
 import com.luis.locogym.data.TemplateExercise
 import com.luis.locogym.data.WorkoutTemplate
@@ -25,6 +26,12 @@ class LocoGymViewModel(private val database: LocoGymDatabase) : ViewModel() {
     )
 
     val templates = database.templateDao().observeAll().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList()
+    )
+
+    val sessionHistory = database.sessionDao().observeHistory().stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = emptyList()
@@ -79,6 +86,23 @@ class LocoGymViewModel(private val database: LocoGymDatabase) : ViewModel() {
 
     fun clearImportMessage() {
         _importMessage.value = null
+    }
+
+    fun finishSession(
+        templateId: Long?,
+        workoutName: String,
+        startedAt: Long,
+        exercises: List<CompletedExerciseInput>
+    ) {
+        viewModelScope.launch {
+            database.sessionDao().saveCompletedSession(
+                templateId = templateId,
+                workoutName = workoutName,
+                startedAt = startedAt,
+                completedAt = System.currentTimeMillis(),
+                exercises = exercises
+            )
+        }
     }
 
     class Factory(private val database: LocoGymDatabase) : ViewModelProvider.Factory {

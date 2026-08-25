@@ -20,7 +20,7 @@
           "restSeconds": 90
         },
         {
-          "name": "Dumbbel Bench Press",
+          "name": "Dumbbell Bench Press",
           "targetWeightKg": 17.5,
           "targetSets": 3,
           "targetReps": 12,
@@ -56,7 +56,7 @@
           "restSeconds": 60
         },
         {
-          "name": "Palloff Press",
+          "name": "Pallof Press",
           "targetWeightKg": 20,
           "targetSets": 3,
           "targetReps": 12,

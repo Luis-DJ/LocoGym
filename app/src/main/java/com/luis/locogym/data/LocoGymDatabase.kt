@@ -8,13 +8,21 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [ExerciseEntry::class, WorkoutTemplate::class, TemplateExercise::class],
-    version = 3,
+    entities = [
+        ExerciseEntry::class,
+        WorkoutTemplate::class,
+        TemplateExercise::class,
+        WorkoutSession::class,
+        SessionExercise::class,
+        SessionSet::class
+    ],
+    version = 4,
     exportSchema = false
 )
 abstract class LocoGymDatabase : RoomDatabase() {
     abstract fun exerciseDao(): ExerciseDao
     abstract fun templateDao(): TemplateDao
+    abstract fun sessionDao(): SessionDao
 
     companion object {
         @Volatile private var instance: LocoGymDatabase? = null
@@ -25,7 +33,7 @@ abstract class LocoGymDatabase : RoomDatabase() {
                     context.applicationContext,
                     LocoGymDatabase::class.java,
                     "locogym.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }
@@ -64,6 +72,54 @@ abstract class LocoGymDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE `template_exercises` ADD COLUMN `targetWeightKg` REAL")
                 database.execSQL(
                     "ALTER TABLE `template_exercises` ADD COLUMN `restSeconds` INTEGER NOT NULL DEFAULT 60"
+                )
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `workout_sessions` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `templateId` INTEGER,
+                        `workoutName` TEXT NOT NULL,
+                        `startedAt` INTEGER NOT NULL,
+                        `completedAt` INTEGER NOT NULL
+                    )""".trimIndent()
+                )
+                database.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `session_exercises` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `sessionId` INTEGER NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `plannedWeightKg` REAL,
+                        `targetSets` INTEGER NOT NULL,
+                        `targetReps` INTEGER NOT NULL,
+                        `restSeconds` INTEGER NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        FOREIGN KEY(`sessionId`) REFERENCES `workout_sessions`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )""".trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_session_exercises_sessionId` " +
+                        "ON `session_exercises` (`sessionId`)"
+                )
+                database.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `session_sets` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `sessionExerciseId` INTEGER NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `weightKg` REAL,
+                        `reps` INTEGER NOT NULL,
+                        `completedAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`sessionExerciseId`) REFERENCES `session_exercises`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )""".trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_session_sets_sessionExerciseId` " +
+                        "ON `session_sets` (`sessionExerciseId`)"
                 )
             }
         }
