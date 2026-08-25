@@ -1,8 +1,8 @@
 # LocoGym
 
-**v0.5.1-dev** — No account. No cloud. No nonsense.
+**v0.6.0-dev** — No account. No cloud. No nonsense.
 
-LocoGym is a deliberately small, private Android workout tracker. It stores reusable workouts, imports them from JSON, records complete or partial sessions, and provides a configurable in-app rest timer.
+LocoGym is a deliberately small, private Android workout tracker. It stores reusable workouts, imports them from JSON, records complete or partial sessions, provides a configurable rest timer, and summarizes local training progress.
 
 ## Run it
 
@@ -13,26 +13,26 @@ LocoGym is a deliberately small, private Android workout tracker. It stores reus
 
 ## Verify this milestone
 
-1. Open **My Workouts** and confirm each workout appears as a compact illustrated summary.
-2. Tap a workout and review its description and complete exercise list.
-3. Confirm the trial illustrations appear for shoulder press, leg press, and neutral-grip lat pulldown; other exercises use a placeholder.
-4. Start and edit a workout from its detail page.
-5. Confirm home, workout details, active workout, and workout editor controls remain above Android's navigation bar and keyboard.
+1. Complete a workout, including trying a partial workout, and open **History**.
+2. Tap **Export**, save both CSV and JSON, and verify the files through Android's save location.
+3. Tap **Clear history**, choose **Export first** once, then confirm deletion; workout templates must remain.
+4. Open **Progress** and verify this month's volume, workouts, sets, training days, weekly chart, personal records, and exercise progress.
 
 The generated illustrations are bundled locally and require no network access. They are identification aids, not coaching or medical instructions.
 
 ## Privacy baseline
 
 - No account or backend
-- No analytics or cloud sync
+- No remote analytics or cloud sync
 - No `INTERNET` permission
 - Vibration permission used only for timer alerts
 - Android backups disabled
 - Workout data stored in the app's private on-device SQLite database (`locogym.db`)
-- JSON import uses Android's system file picker
+- JSON import and history export use Android's system file pickers
+- No broad storage permission
 
 Uninstalling the app removes its local data.
 
 ## Scope
 
-This milestone adds compact workout summaries, a dedicated workout detail page, local generated cover art, and a trial set of exercise thumbnails. Remaining exercises intentionally use placeholders until the illustration style is validated.
+This milestone adds CSV/JSON history export, confirmed history cleanup, and on-device progress analysis. Training volume is completed-set weight × reps. Partial workouts contribute only completed sets. Personal records use the heaviest completed set for each exercise, with repetitions as the tie-breaker.

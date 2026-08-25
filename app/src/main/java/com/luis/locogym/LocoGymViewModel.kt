@@ -3,12 +3,16 @@ package com.luis.locogym
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.luis.locogym.data.ExerciseEntry
 import com.luis.locogym.data.CompletedExerciseInput
 import com.luis.locogym.data.LocoGymDatabase
 import com.luis.locogym.data.TemplateExercise
 import com.luis.locogym.data.WorkoutTemplate
 import com.luis.locogym.data.WorkoutJsonParser
+import com.luis.locogym.data.HistoryExporter
+import com.luis.locogym.data.WorkoutAnalytics
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,6 +40,35 @@ class LocoGymViewModel(private val database: LocoGymDatabase) : ViewModel() {
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = emptyList()
     )
+
+    val sessionDetails = database.sessionDao().observeAllDetails().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList()
+    )
+
+    val analytics = sessionDetails.map(WorkoutAnalytics::calculate).stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = WorkoutAnalytics.calculate(emptyList())
+    )
+
+    fun buildHistoryExport(asJson: Boolean, onReady: (String) -> Unit) {
+        viewModelScope.launch {
+            val sessions = database.sessionDao().getAllDetails()
+            val legacy = database.exerciseDao().getAll()
+            onReady(if (asJson) HistoryExporter.toJson(sessions, legacy) else HistoryExporter.toCsv(sessions, legacy))
+        }
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch {
+            database.withTransaction {
+                database.sessionDao().deleteAll()
+                database.exerciseDao().deleteAll()
+            }
+        }
+    }
 
     fun save(exercise: String, weightKg: Double, reps: Int, sets: Int) {
         viewModelScope.launch {

@@ -1,9 +1,11 @@
 package com.luis.locogym.data
 
 import androidx.room.Entity
+import androidx.room.Embedded
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.Relation
 
 @Entity(tableName = "workout_sessions")
 data class WorkoutSession(
@@ -76,3 +78,27 @@ data class SessionSummary(
     val exerciseCount: Int,
     val setCount: Int
 )
+
+data class SessionExerciseWithSets(
+    @Embedded val exercise: SessionExercise,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "sessionExerciseId"
+    )
+    val sets: List<SessionSet>
+) {
+    val orderedSets: List<SessionSet> get() = sets.sortedBy { it.position }
+}
+
+data class SessionWithDetails(
+    @Embedded val session: WorkoutSession,
+    @Relation(
+        entity = SessionExercise::class,
+        parentColumn = "id",
+        entityColumn = "sessionId"
+    )
+    val exercises: List<SessionExerciseWithSets>
+) {
+    val orderedExercises: List<SessionExerciseWithSets>
+        get() = exercises.sortedBy { it.exercise.position }
+}

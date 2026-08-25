@@ -12,4 +12,10 @@ interface ExerciseDao {
 
     @Query("SELECT * FROM exercise_entries ORDER BY createdAt DESC, id DESC")
     fun observeAll(): Flow<List<ExerciseEntry>>
+
+    @Query("SELECT * FROM exercise_entries ORDER BY createdAt DESC, id DESC")
+    suspend fun getAll(): List<ExerciseEntry>
+
+    @Query("DELETE FROM exercise_entries")
+    suspend fun deleteAll()
 }

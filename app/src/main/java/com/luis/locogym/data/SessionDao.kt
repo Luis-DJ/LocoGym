@@ -18,6 +18,17 @@ interface SessionDao {
     )
     fun observeHistory(): Flow<List<SessionSummary>>
 
+    @Transaction
+    @Query("SELECT * FROM workout_sessions ORDER BY completedAt DESC")
+    fun observeAllDetails(): Flow<List<SessionWithDetails>>
+
+    @Transaction
+    @Query("SELECT * FROM workout_sessions ORDER BY completedAt DESC")
+    suspend fun getAllDetails(): List<SessionWithDetails>
+
+    @Query("DELETE FROM workout_sessions")
+    suspend fun deleteAll()
+
     @Insert
     suspend fun insertSession(session: WorkoutSession): Long
 

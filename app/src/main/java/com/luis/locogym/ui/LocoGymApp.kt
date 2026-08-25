@@ -14,8 +14,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,6 +26,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -43,13 +47,14 @@ import com.luis.locogym.data.CompletedSetInput
 import com.luis.locogym.data.SessionSummary
 import com.luis.locogym.data.TemplateExercise
 import com.luis.locogym.data.TemplateWithExercises
+import com.luis.locogym.data.WorkoutAnalytics
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private enum class HomeSection { TEMPLATES, HISTORY }
+private enum class HomeSection { TEMPLATES, HISTORY, PROGRESS }
 private enum class AlertMode { SOUND, VIBRATION, BOTH }
 
 private data class ExerciseDraft(
@@ -76,6 +81,7 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     val entries by viewModel.entries.collectAsStateWithLifecycle()
     val sessionHistory by viewModel.sessionHistory.collectAsStateWithLifecycle()
+    val analytics by viewModel.analytics.collectAsStateWithLifecycle()
     val importMessage by viewModel.importMessage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("locogym_settings", Context.MODE_PRIVATE) }
@@ -95,6 +101,13 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
         }.onSuccess(viewModel::importWorkouts)
             .onFailure { viewModel.importWorkouts("") }
     }
+    var pendingExport by remember { mutableStateOf("") }
+    val csvExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri -> uri?.let { context.contentResolver.openOutputStream(it)?.bufferedWriter()?.use { writer -> writer.write(pendingExport) } } }
+    val jsonExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> uri?.let { context.contentResolver.openOutputStream(it)?.bufferedWriter()?.use { writer -> writer.write(pendingExport) } } }
     var section by rememberSaveable { mutableStateOf(HomeSection.TEMPLATES) }
     var editing by remember { mutableStateOf<TemplateWithExercises?>(null) }
     var editorOpen by rememberSaveable { mutableStateOf(false) }
@@ -147,12 +160,26 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                     templates = templates,
                     entries = entries,
                     sessionHistory = sessionHistory,
+                    analytics = analytics,
                     onNewTemplate = { editing = null; editorOpen = true },
                     onOpenTemplate = { viewedWorkout = it },
                     onImportTemplates = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                     importMessage = importMessage,
                     onDismissImportMessage = viewModel::clearImportMessage,
-                    onAlertSettings = { showAlertSettings = true }
+                    onAlertSettings = { showAlertSettings = true },
+                    onExportCsv = {
+                        viewModel.buildHistoryExport(false) { content ->
+                            pendingExport = content
+                            csvExportLauncher.launch("locogym-history.csv")
+                        }
+                    },
+                    onExportJson = {
+                        viewModel.buildHistoryExport(true) { content ->
+                            pendingExport = content
+                            jsonExportLauncher.launch("locogym-history.json")
+                        }
+                    },
+                    onClearHistory = viewModel::clearHistory
                 )
             }
         }
@@ -177,12 +204,16 @@ private fun HomeScreen(
     templates: List<TemplateWithExercises>,
     entries: List<ExerciseEntry>,
     sessionHistory: List<SessionSummary>,
+    analytics: WorkoutAnalytics,
     onNewTemplate: () -> Unit,
     onOpenTemplate: (TemplateWithExercises) -> Unit,
     onImportTemplates: () -> Unit,
     importMessage: String?,
     onDismissImportMessage: () -> Unit,
-    onAlertSettings: () -> Unit
+    onAlertSettings: () -> Unit,
+    onExportCsv: () -> Unit,
+    onExportJson: () -> Unit,
+    onClearHistory: () -> Unit
 ) {
     Column(
         Modifier
@@ -212,6 +243,11 @@ private fun HomeScreen(
                 onClick = { onSectionChange(HomeSection.HISTORY) },
                 label = { Text("History") }
             )
+            FilterChip(
+                selected = section == HomeSection.PROGRESS,
+                onClick = { onSectionChange(HomeSection.PROGRESS) },
+                label = { Text("Progress") }
+            )
         }
         Spacer(Modifier.height(12.dp))
         when (section) {
@@ -227,10 +263,14 @@ private fun HomeScreen(
             HomeSection.HISTORY -> HistoryScreen(
                 sessionHistory = sessionHistory,
                 legacyEntries = entries,
+                onExportCsv = onExportCsv,
+                onExportJson = onExportJson,
+                onClearHistory = onClearHistory,
                 modifier = Modifier.weight(1f)
             )
+            HomeSection.PROGRESS -> ProgressScreen(analytics, Modifier.weight(1f))
         }
-        Text("v0.5.1-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.6.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -786,11 +826,25 @@ private fun List<ExerciseRun>.updateSet(
 private fun HistoryScreen(
     sessionHistory: List<SessionSummary>,
     legacyEntries: List<ExerciseEntry>,
+    onExportCsv: () -> Unit,
+    onExportJson: () -> Unit,
+    onClearHistory: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val formatter = remember { DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a") }
+    var showExport by rememberSaveable { mutableStateOf(false) }
+    var confirmClear by rememberSaveable { mutableStateOf(false) }
     LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Text("Completed workouts", style = MaterialTheme.typography.titleLarge) }
+        item {
+            Text("Completed workouts", style = MaterialTheme.typography.titleLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { showExport = true }) { Text("Export") }
+                TextButton(
+                    onClick = { confirmClear = true },
+                    enabled = sessionHistory.isNotEmpty() || legacyEntries.isNotEmpty()
+                ) { Text("Clear history") }
+            }
+        }
         if (sessionHistory.isEmpty()) {
             item { Text("Finished workouts will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
@@ -821,7 +875,141 @@ private fun HistoryScreen(
             items(legacyEntries, key = { "legacy-${it.id}" }) { EntryCard(it) }
         }
     }
+    if (showExport) {
+        AlertDialog(
+            onDismissRequest = { showExport = false },
+            title = { Text("Export history") },
+            text = { Text("CSV is convenient for spreadsheets. JSON preserves the full structured backup.") },
+            confirmButton = {
+                TextButton(onClick = { showExport = false; onExportCsv() }) { Text("Save CSV") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExport = false; onExportJson() }) { Text("Save JSON") }
+            }
+        )
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear workout history?") },
+            text = { Text("This permanently deletes completed sessions and quick records. Your workout templates remain available.") },
+            confirmButton = {
+                TextButton(onClick = { confirmClear = false; onClearHistory() }) { Text("Delete history") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { confirmClear = false; showExport = true }) { Text("Export first") }
+                    TextButton(onClick = { confirmClear = false }) { Text("Cancel") }
+                }
+            }
+        )
+    }
 }
+
+@Composable
+private fun ProgressScreen(analytics: WorkoutAnalytics, modifier: Modifier = Modifier) {
+    val volume = remember(analytics.monthlyVolumeKg) {
+        if (analytics.monthlyVolumeKg >= 1000) "%.1f t".format(analytics.monthlyVolumeKg / 1000) else "%.0f kg".format(analytics.monthlyVolumeKg)
+    }
+    var selectedExercise by remember(analytics.exerciseProgress.keys) {
+        mutableStateOf(analytics.exerciseProgress.keys.firstOrNull())
+    }
+    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Text("This month", style = MaterialTheme.typography.titleLarge) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricCard("Volume", volume, Modifier.weight(1f))
+                MetricCard("Workouts", analytics.monthlyWorkouts.toString(), Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricCard("Sets", analytics.monthlySets.toString(), Modifier.weight(1f))
+                MetricCard("Training days", analytics.monthlyTrainingDays.toString(), Modifier.weight(1f))
+            }
+        }
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Weekly volume", fontWeight = FontWeight.Bold)
+                    VolumeBars(analytics.weeklyVolumeKg, Modifier.fillMaxWidth().height(130.dp).padding(top = 12.dp))
+                }
+            }
+        }
+        item { Text("Personal records", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        if (analytics.personalRecords.isEmpty()) item { Text("Complete weighted sets to establish records.") }
+        items(analytics.personalRecords, key = { it.exerciseName }) { record ->
+            Card(Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(14.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(record.exerciseName, modifier = Modifier.weight(1f))
+                    Text("${formatWeight(record.weightKg)} kg × ${record.reps}", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        if (analytics.exerciseProgress.isNotEmpty()) {
+            item {
+                Text("Exercise progress", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(analytics.exerciseProgress.keys.toList()) { name ->
+                        FilterChip(selectedExercise == name, { selectedExercise = name }, { Text(name) })
+                    }
+                }
+                val points = selectedExercise?.let { analytics.exerciseProgress[it] }.orEmpty()
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Heaviest set per session")
+                        ProgressLine(points.map { it.maxWeightKg }, Modifier.fillMaxWidth().height(130.dp).padding(top = 12.dp))
+                    }
+                }
+            }
+        }
+        item {
+            Text(
+                "Volume is weight × reps for completed sets. Partial workouts count too.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier) { Column(Modifier.padding(14.dp)) { Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text(label) } }
+}
+
+@Composable
+private fun VolumeBars(values: List<Double>, modifier: Modifier = Modifier) {
+    val barColor = MaterialTheme.colorScheme.primary
+    Canvas(modifier) {
+        val maximum = values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
+        val slot = size.width / values.size.coerceAtLeast(1)
+        values.forEachIndexed { index, value ->
+            val height = (size.height * (value / maximum)).toFloat()
+            drawRect(barColor, Offset(index * slot + slot * .18f, size.height - height), androidx.compose.ui.geometry.Size(slot * .64f, height))
+        }
+    }
+}
+
+@Composable
+private fun ProgressLine(values: List<Double>, modifier: Modifier = Modifier) {
+    val lineColor = MaterialTheme.colorScheme.primary
+    Canvas(modifier) {
+        if (values.isEmpty()) return@Canvas
+        val minimum = values.minOrNull() ?: 0.0
+        val range = ((values.maxOrNull() ?: minimum) - minimum).coerceAtLeast(1.0)
+        val points = values.mapIndexed { index, value ->
+            Offset(
+                if (values.size == 1) size.width / 2 else size.width * index / (values.size - 1),
+                size.height - (size.height * ((value - minimum) / range)).toFloat()
+            )
+        }
+        points.zipWithNext().forEach { (a, b) -> drawLine(lineColor, a, b, strokeWidth = 5f) }
+        points.forEach { drawCircle(lineColor, 7f, it) }
+    }
+}
+
+private fun formatWeight(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
 
 @Composable
 private fun AlertSettingsDialog(
