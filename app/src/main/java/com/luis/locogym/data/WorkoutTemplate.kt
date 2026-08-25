@@ -31,8 +31,10 @@ data class TemplateExercise(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val templateId: Long,
     val name: String,
+    val targetWeightKg: Double?,
     val targetSets: Int,
     val targetReps: Int,
+    val restSeconds: Int,
     val position: Int
 )
 

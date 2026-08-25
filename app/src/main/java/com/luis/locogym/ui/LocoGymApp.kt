@@ -1,5 +1,7 @@
 package com.luis.locogym.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -25,14 +28,26 @@ private enum class HomeSection { TEMPLATES, LOG }
 
 private data class ExerciseDraft(
     val name: String = "",
+    val weightKg: String = "",
     val sets: String = "3",
-    val reps: String = "8"
+    val reps: String = "8",
+    val restSeconds: String = "60"
 )
 
 @Composable
 fun LocoGymApp(viewModel: LocoGymViewModel) {
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     val entries by viewModel.entries.collectAsStateWithLifecycle()
+    val importMessage by viewModel.importMessage.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                ?: error("The selected file could not be read.")
+        }.onSuccess(viewModel::importWorkouts)
+            .onFailure { viewModel.importWorkouts("") }
+    }
     var section by rememberSaveable { mutableStateOf(HomeSection.TEMPLATES) }
     var editing by remember { mutableStateOf<TemplateWithExercises?>(null) }
     var editorOpen by rememberSaveable { mutableStateOf(false) }
@@ -56,6 +71,9 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                     entries = entries,
                     onNewTemplate = { editing = null; editorOpen = true },
                     onEditTemplate = { editing = it; editorOpen = true },
+                    onImportTemplates = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+                    importMessage = importMessage,
+                    onDismissImportMessage = viewModel::clearImportMessage,
                     onSaveEntry = viewModel::save
                 )
             }
@@ -71,6 +89,9 @@ private fun HomeScreen(
     entries: List<ExerciseEntry>,
     onNewTemplate: () -> Unit,
     onEditTemplate: (TemplateWithExercises) -> Unit,
+    onImportTemplates: () -> Unit,
+    importMessage: String?,
+    onDismissImportMessage: () -> Unit,
     onSaveEntry: (String, Double, Int, Int) -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
@@ -82,7 +103,7 @@ private fun HomeScreen(
             FilterChip(
                 selected = section == HomeSection.TEMPLATES,
                 onClick = { onSectionChange(HomeSection.TEMPLATES) },
-                label = { Text("Templates") }
+                label = { Text("My Workouts") }
             )
             FilterChip(
                 selected = section == HomeSection.LOG,
@@ -93,11 +114,17 @@ private fun HomeScreen(
         Spacer(Modifier.height(12.dp))
         when (section) {
             HomeSection.TEMPLATES -> TemplateList(
-                templates, onNewTemplate, onEditTemplate, Modifier.weight(1f)
+                templates = templates,
+                onNewTemplate = onNewTemplate,
+                onEditTemplate = onEditTemplate,
+                onImportTemplates = onImportTemplates,
+                importMessage = importMessage,
+                onDismissImportMessage = onDismissImportMessage,
+                modifier = Modifier.weight(1f)
             )
             HomeSection.LOG -> WorkoutLog(entries, onSaveEntry, Modifier.weight(1f))
         }
-        Text("v0.2.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.3.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -107,12 +134,26 @@ private fun TemplateList(
     templates: List<TemplateWithExercises>,
     onNewTemplate: () -> Unit,
     onEditTemplate: (TemplateWithExercises) -> Unit,
+    onImportTemplates: () -> Unit,
+    importMessage: String?,
+    onDismissImportMessage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Button(onClick = onNewTemplate, modifier = Modifier.fillMaxWidth()) {
-                Text("Create template")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onNewTemplate, modifier = Modifier.weight(1f)) { Text("Create workout") }
+                OutlinedButton(onClick = onImportTemplates, modifier = Modifier.weight(1f)) { Text("Import JSON") }
+            }
+        }
+        if (importMessage != null) {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(importMessage, modifier = Modifier.weight(1f))
+                        TextButton(onClick = onDismissImportMessage) { Text("Dismiss") }
+                    }
+                }
             }
         }
         if (templates.isEmpty()) {
@@ -135,7 +176,8 @@ private fun TemplateList(
                         style = MaterialTheme.typography.labelLarge
                     )
                     item.orderedExercises.take(3).forEach { exercise ->
-                        Text("${exercise.name} • ${exercise.targetSets} × ${exercise.targetReps}")
+                        val weight = exercise.targetWeightKg?.let { " @ ${it.clean()} kg" }.orEmpty()
+                        Text("${exercise.name} • ${exercise.targetSets} × ${exercise.targetReps}$weight • ${exercise.restSeconds}s rest")
                     }
                     if (item.exercises.size > 3) Text("+ ${item.exercises.size - 3} more")
                 }
@@ -154,17 +196,25 @@ private fun TemplateEditor(
     var description by remember(existing?.template?.id) { mutableStateOf(existing?.template?.description.orEmpty()) }
     var exercises by remember(existing?.template?.id) {
         mutableStateOf(existing?.orderedExercises?.map {
-            ExerciseDraft(it.name, it.targetSets.toString(), it.targetReps.toString())
+            ExerciseDraft(
+                name = it.name,
+                weightKg = it.targetWeightKg?.clean().orEmpty(),
+                sets = it.targetSets.toString(),
+                reps = it.targetReps.toString(),
+                restSeconds = it.restSeconds.toString()
+            )
         }.orEmpty())
     }
     val valid = name.isNotBlank() && exercises.isNotEmpty() && exercises.all {
-        it.name.isNotBlank() && (it.sets.toIntOrNull() ?: 0) > 0 && (it.reps.toIntOrNull() ?: 0) > 0
+        it.name.isNotBlank() && (it.weightKg.isBlank() || (it.weightKg.toDoubleOrNull() ?: -1.0) >= 0) &&
+            (it.sets.toIntOrNull() ?: 0) > 0 && (it.reps.toIntOrNull() ?: 0) > 0 &&
+            (it.restSeconds.toIntOrNull() ?: 0) in 1..3600
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(36.dp))
         Text(
-            if (existing == null) "New template" else "Edit template",
+            if (existing == null) "New workout" else "Edit workout",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
@@ -174,7 +224,7 @@ private fun TemplateEditor(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Template name") },
+                    label = { Text("Workout name") },
                     placeholder = { Text("Upper Body") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -214,14 +264,16 @@ private fun TemplateEditor(
                         TemplateExercise(
                             templateId = existing?.template?.id ?: 0,
                             name = draft.name.trim(),
+                            targetWeightKg = draft.weightKg.toDoubleOrNull(),
                             targetSets = draft.sets.toInt(),
                             targetReps = draft.reps.toInt(),
+                            restSeconds = draft.restSeconds.toInt(),
                             position = index
                         )
                     })
                 },
                 modifier = Modifier.weight(1f)
-            ) { Text("Save template") }
+            ) { Text("Save workout") }
         }
         Spacer(Modifier.height(20.dp))
     }
@@ -248,10 +300,22 @@ private fun ExerciseDraftEditor(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
+            DecimalField(
+                "Target weight kg (optional)",
+                draft.weightKg,
+                { onChange(draft.copy(weightKg = it)) },
+                Modifier.fillMaxWidth()
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 IntegerField("Target sets", draft.sets, { onChange(draft.copy(sets = it)) }, Modifier.weight(1f))
                 IntegerField("Target reps", draft.reps, { onChange(draft.copy(reps = it)) }, Modifier.weight(1f))
             }
+            IntegerField(
+                "Rest between sets (seconds)",
+                draft.restSeconds,
+                { onChange(draft.copy(restSeconds = it)) },
+                Modifier.fillMaxWidth()
+            )
         }
     }
 }

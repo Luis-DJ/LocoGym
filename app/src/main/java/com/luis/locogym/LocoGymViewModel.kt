@@ -7,11 +7,17 @@ import com.luis.locogym.data.ExerciseEntry
 import com.luis.locogym.data.LocoGymDatabase
 import com.luis.locogym.data.TemplateExercise
 import com.luis.locogym.data.WorkoutTemplate
+import com.luis.locogym.data.WorkoutJsonParser
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class LocoGymViewModel(private val database: LocoGymDatabase) : ViewModel() {
+    private val _importMessage = MutableStateFlow<String?>(null)
+    val importMessage = _importMessage.asStateFlow()
+
     val entries = database.exerciseDao().observeAll().stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -55,6 +61,24 @@ class LocoGymViewModel(private val database: LocoGymDatabase) : ViewModel() {
                 exercises = exercises
             )
         }
+    }
+
+    fun importWorkouts(json: String) {
+        viewModelScope.launch {
+            runCatching {
+                val parsed = WorkoutJsonParser.parse(json)
+                database.templateDao().importTemplates(parsed)
+                parsed.size
+            }.onSuccess { count ->
+                _importMessage.value = "Imported $count ${if (count == 1) "workout" else "workouts"}."
+            }.onFailure { error ->
+                _importMessage.value = "Import failed: ${error.message ?: "Invalid JSON file."}"
+            }
+        }
+    }
+
+    fun clearImportMessage() {
+        _importMessage.value = null
     }
 
     class Factory(private val database: LocoGymDatabase) : ViewModelProvider.Factory {

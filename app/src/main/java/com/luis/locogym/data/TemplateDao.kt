@@ -25,6 +25,9 @@ interface TemplateDao {
     @Query("DELETE FROM template_exercises WHERE templateId = :templateId")
     suspend fun deleteExercises(templateId: Long)
 
+    @Query("SELECT id FROM workout_templates WHERE name = :name COLLATE NOCASE LIMIT 1")
+    suspend fun findTemplateIdByName(name: String): Long?
+
     @Transaction
     suspend fun saveTemplate(
         template: WorkoutTemplate,
@@ -43,5 +46,15 @@ interface TemplateDao {
                 exercise.copy(id = 0, templateId = templateId, position = index)
             }
         )
+    }
+
+    @Transaction
+    suspend fun importTemplates(items: List<Pair<WorkoutTemplate, List<TemplateExercise>>>) {
+        items.forEach { (template, exercises) ->
+            require(findTemplateIdByName(template.name) == null) {
+                "A workout named '${template.name}' already exists."
+            }
+            saveTemplate(template, exercises)
+        }
     }
 }

@@ -32,8 +32,8 @@ class TemplateDaoTest {
         dao.saveTemplate(
             WorkoutTemplate(name = "Upper Body", description = "Chest and back"),
             listOf(
-                TemplateExercise(templateId = 0, name = "Bench Press", targetSets = 3, targetReps = 8, position = 0),
-                TemplateExercise(templateId = 0, name = "Row", targetSets = 3, targetReps = 10, position = 1)
+                TemplateExercise(templateId = 0, name = "Bench Press", targetWeightKg = 60.0, targetSets = 3, targetReps = 8, restSeconds = 90, position = 0),
+                TemplateExercise(templateId = 0, name = "Row", targetWeightKg = 50.0, targetSets = 3, targetReps = 10, restSeconds = 60, position = 1)
             )
         )
 
@@ -44,7 +44,7 @@ class TemplateDaoTest {
         dao.saveTemplate(
             saved.template.copy(description = "Updated"),
             listOf(
-                TemplateExercise(templateId = saved.template.id, name = "Pull-up", targetSets = 4, targetReps = 6, position = 0)
+                TemplateExercise(templateId = saved.template.id, name = "Pull-up", targetWeightKg = null, targetSets = 4, targetReps = 6, restSeconds = 90, position = 0)
             )
         )
 
