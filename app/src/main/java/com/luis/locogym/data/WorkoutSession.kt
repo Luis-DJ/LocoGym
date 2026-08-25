@@ -11,7 +11,8 @@ data class WorkoutSession(
     val templateId: Long?,
     val workoutName: String,
     val startedAt: Long,
-    val completedAt: Long
+    val completedAt: Long,
+    val completedAsPlanned: Boolean
 )
 
 @Entity(
@@ -71,6 +72,7 @@ data class SessionSummary(
     val workoutName: String,
     val startedAt: Long,
     val completedAt: Long,
+    val completedAsPlanned: Boolean,
     val exerciseCount: Int,
     val setCount: Int
 )

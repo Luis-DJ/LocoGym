@@ -99,11 +99,12 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                     workout = activeWorkout!!,
                     alertMode = alertMode,
                     onCancel = { activeWorkout = null },
-                    onFinish = { startedAt, completed ->
+                    onFinish = { startedAt, completed, completedAsPlanned ->
                         viewModel.finishSession(
                             templateId = activeWorkout!!.template.id,
                             workoutName = activeWorkout!!.template.name,
                             startedAt = startedAt,
+                            completedAsPlanned = completedAsPlanned,
                             exercises = completed
                         )
                         activeWorkout = null
@@ -207,7 +208,7 @@ private fun HomeScreen(
                 modifier = Modifier.weight(1f)
             )
         }
-        Text("v0.4.1-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.4.2-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -416,7 +417,7 @@ private fun ActiveWorkoutScreen(
     workout: TemplateWithExercises,
     alertMode: AlertMode,
     onCancel: () -> Unit,
-    onFinish: (Long, List<CompletedExerciseInput>) -> Unit
+    onFinish: (Long, List<CompletedExerciseInput>, Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -437,19 +438,41 @@ private fun ActiveWorkoutScreen(
     }
     var timerRemaining by rememberSaveable(workout.template.id) { mutableIntStateOf(0) }
     var timerRunning by rememberSaveable(workout.template.id) { mutableStateOf(false) }
+    var confirmPartialFinish by rememberSaveable(workout.template.id) { mutableStateOf(false) }
     LaunchedEffect(timerRunning, timerRemaining) {
         if (timerRunning && timerRemaining > 0) {
             delay(1_000)
             timerRemaining -= 1
         } else if (timerRunning) {
-            timerRunning = false
             playRestAlert(context, alertMode)
+            timerRunning = false
         }
     }
 
     val completedCount = runs.sumOf { run -> run.sets.count { it.completedAt != null } }
     val totalCount = runs.sumOf { it.sets.size }
     val allComplete = totalCount > 0 && completedCount == totalCount
+    val finishSession = {
+        onFinish(startedAt, runs.mapIndexedNotNull { index, run ->
+            val completedSets = run.sets.filter { it.completedAt != null }
+            if (completedSets.isEmpty()) return@mapIndexedNotNull null
+            CompletedExerciseInput(
+                name = run.exercise.name,
+                plannedWeightKg = run.exercise.targetWeightKg,
+                targetSets = run.exercise.targetSets,
+                targetReps = run.exercise.targetReps,
+                restSeconds = run.exercise.restSeconds,
+                position = index,
+                sets = completedSets.map { set ->
+                    CompletedSetInput(
+                        weightKg = set.weightKg.toDoubleOrNull(),
+                        reps = set.reps.toInt(),
+                        completedAt = set.completedAt!!
+                    )
+                }
+            )
+        }, allComplete)
+    }
 
     Column(
         Modifier
@@ -558,29 +581,34 @@ private fun ActiveWorkoutScreen(
         }
 
         Button(
-            enabled = allComplete,
+            enabled = completedCount > 0,
             onClick = {
-                onFinish(startedAt, runs.mapIndexed { index, run ->
-                    CompletedExerciseInput(
-                        name = run.exercise.name,
-                        plannedWeightKg = run.exercise.targetWeightKg,
-                        targetSets = run.exercise.targetSets,
-                        targetReps = run.exercise.targetReps,
-                        restSeconds = run.exercise.restSeconds,
-                        position = index,
-                        sets = run.sets.map { set ->
-                            CompletedSetInput(
-                                weightKg = set.weightKg.toDoubleOrNull(),
-                                reps = set.reps.toInt(),
-                                completedAt = set.completedAt!!
-                            )
-                        }
-                    )
-                })
+                focusManager.clearFocus(force = true)
+                keyboardController?.hide()
+                if (allComplete) finishSession() else confirmPartialFinish = true
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Finish workout") }
         Spacer(Modifier.height(18.dp))
+    }
+
+    if (confirmPartialFinish) {
+        AlertDialog(
+            onDismissRequest = { confirmPartialFinish = false },
+            title = { Text("Finish partial workout?") },
+            text = {
+                Text("You completed $completedCount of $totalCount planned sets. The workout will be saved as Partial in History.")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    confirmPartialFinish = false
+                    finishSession()
+                }) { Text("Finish and save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmPartialFinish = false }) { Text("Keep working") }
+            }
+        )
     }
 }
 
@@ -611,6 +639,12 @@ private fun HistoryScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(session.workoutName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (session.completedAsPlanned) "Completed" else "Partial",
+                        color = if (session.completedAsPlanned) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.tertiary,
+                        style = MaterialTheme.typography.labelLarge
+                    )
                     Text("${session.exerciseCount} exercises • ${session.setCount} sets")
                     Text(
                         Instant.ofEpochMilli(session.completedAt).atZone(ZoneId.systemDefault()).format(formatter),
@@ -687,26 +721,33 @@ private suspend fun playRestAlert(context: Context, mode: AlertMode) {
     }
 
     if (mode == AlertMode.SOUND || mode == AlertMode.BOTH) {
-        val played = runCatching {
+        val ringtone = runCatching {
             val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: return@runCatching false
-            val ringtone = RingtoneManager.getRingtone(context, uri)
-                ?: return@runCatching false
-            ringtone.audioAttributes = AudioAttributes.Builder()
+                ?: return@runCatching null
+            RingtoneManager.getRingtone(context, uri)?.apply {
+                audioAttributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
-            ringtone.play()
-            delay(2_500)
-            ringtone.stop()
-            true
-        }.getOrDefault(false)
+            }
+        }.getOrNull()
 
-        if (!played) {
+        if (ringtone != null) {
+            try {
+                ringtone.play()
+                delay(2_500)
+            } finally {
+                ringtone.stop()
+            }
+        } else {
             val tone = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-            tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 1_800)
-            delay(1_900)
-            tone.release()
+            try {
+                tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 1_800)
+                delay(1_900)
+            } finally {
+                tone.stopTone()
+                tone.release()
+            }
         }
     }
 }

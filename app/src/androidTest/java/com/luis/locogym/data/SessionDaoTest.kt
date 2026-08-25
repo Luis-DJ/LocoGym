@@ -33,6 +33,7 @@ class SessionDaoTest {
             workoutName = "Upper Body",
             startedAt = 1000,
             completedAt = 2000,
+            completedAsPlanned = false,
             exercises = listOf(
                 CompletedExerciseInput(
                     name = "Bench Press",
@@ -53,5 +54,6 @@ class SessionDaoTest {
         assertEquals("Upper Body", summary.workoutName)
         assertEquals(1, summary.exerciseCount)
         assertEquals(2, summary.setCount)
+        assertEquals(false, summary.completedAsPlanned)
     }
 }

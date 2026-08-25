@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface SessionDao {
     @Query(
-        """SELECT s.id, s.workoutName, s.startedAt, s.completedAt,
+        """SELECT s.id, s.workoutName, s.startedAt, s.completedAt, s.completedAsPlanned,
             (SELECT COUNT(*) FROM session_exercises e WHERE e.sessionId = s.id) AS exerciseCount,
             (SELECT COUNT(*) FROM session_sets st
                 INNER JOIN session_exercises e ON e.id = st.sessionExerciseId
@@ -33,6 +33,7 @@ interface SessionDao {
         workoutName: String,
         startedAt: Long,
         completedAt: Long,
+        completedAsPlanned: Boolean,
         exercises: List<CompletedExerciseInput>
     ) {
         val sessionId = insertSession(
@@ -40,7 +41,8 @@ interface SessionDao {
                 templateId = templateId,
                 workoutName = workoutName,
                 startedAt = startedAt,
-                completedAt = completedAt
+                completedAt = completedAt,
+                completedAsPlanned = completedAsPlanned
             )
         )
         exercises.forEach { input ->

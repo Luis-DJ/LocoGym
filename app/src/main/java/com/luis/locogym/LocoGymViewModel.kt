@@ -92,6 +92,7 @@ class LocoGymViewModel(private val database: LocoGymDatabase) : ViewModel() {
         templateId: Long?,
         workoutName: String,
         startedAt: Long,
+        completedAsPlanned: Boolean,
         exercises: List<CompletedExerciseInput>
     ) {
         viewModelScope.launch {
@@ -100,6 +101,7 @@ class LocoGymViewModel(private val database: LocoGymDatabase) : ViewModel() {
                 workoutName = workoutName,
                 startedAt = startedAt,
                 completedAt = System.currentTimeMillis(),
+                completedAsPlanned = completedAsPlanned,
                 exercises = exercises
             )
         }

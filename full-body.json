@@ -1,0 +1,71 @@
+{
+  "formatVersion": 1,
+  "workoutTemplates": [
+    {
+      "name": "Full Body",
+      "description": "",
+      "exercises": [
+        {
+          "name": "Seated Leg Press",
+          "targetWeightKg": 80,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+        {
+          "name": "Neutral Grip Lat Pulldown",
+          "targetWeightKg": 40,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 90
+        },
+        {
+          "name": "Machine Seated Leg Curl",
+          "targetWeightKg": 12,
+          "targetSets": 3,
+          "targetReps": 15,
+          "restSeconds": 60
+        },
+        {
+          "name": "Dumbbell Flat bench Chest Fly",
+          "targetWeightKg": 7,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+        {
+          "name": "Machine Seated Leg Extension (35->45)",
+          "targetWeightKg": 35,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+
+        {
+          "name": "Dumbbell Seated Shoulder Press",
+          "targetWeightKg": 7,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+
+        {
+          "name": "Dumbbell Incline Bicep Curl",
+          "targetWeightKg": 7,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        },
+
+        {
+          "name": "Cable V Bar Tricep Pushdown",
+          "targetWeightKg": 17,
+          "targetSets": 3,
+          "targetReps": 12,
+          "restSeconds": 60
+        }
+
+      ]
+    }
+  ]
+}

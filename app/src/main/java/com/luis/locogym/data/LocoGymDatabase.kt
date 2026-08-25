@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SessionExercise::class,
         SessionSet::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class LocoGymDatabase : RoomDatabase() {
@@ -33,7 +33,7 @@ abstract class LocoGymDatabase : RoomDatabase() {
                     context.applicationContext,
                     LocoGymDatabase::class.java,
                     "locogym.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { instance = it }
             }
@@ -120,6 +120,15 @@ abstract class LocoGymDatabase : RoomDatabase() {
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_session_sets_sessionExerciseId` " +
                         "ON `session_sets` (`sessionExerciseId`)"
+                )
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `workout_sessions` ADD COLUMN " +
+                        "`completedAsPlanned` INTEGER NOT NULL DEFAULT 1"
                 )
             }
         }
