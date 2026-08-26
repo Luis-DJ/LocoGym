@@ -465,9 +465,23 @@ private fun workoutCoverResource(name: String): Int = when {
 }
 
 private fun exerciseImageResource(name: String): Int? = when {
-    name.contains("shoulder press", ignoreCase = true) -> R.drawable.cover_upper_body
-    name.contains("leg press", ignoreCase = true) -> R.drawable.cover_legs
+    name.contains("shoulder press", ignoreCase = true) -> R.drawable.exercise_shoulder_press
     name.contains("lat pulldown", ignoreCase = true) -> R.drawable.exercise_lat_pulldown
+    name.contains("bench press", ignoreCase = true) -> R.drawable.exercise_bench_press
+    name.contains("seated row", ignoreCase = true) -> R.drawable.exercise_seated_row
+    name.contains("chest fly", ignoreCase = true) && name.contains("machine", ignoreCase = true) -> R.drawable.exercise_machine_chest_fly
+    name.contains("chest fly", ignoreCase = true) -> R.drawable.exercise_dumbbell_chest_fly
+    name.contains("tricep pushdown", ignoreCase = true) -> R.drawable.exercise_triceps_pushdown
+    name.contains("flat bar biceps", ignoreCase = true) -> R.drawable.exercise_cable_biceps_curl
+    name.contains("pallof", ignoreCase = true) -> R.drawable.exercise_pallof_press
+    name.contains("leg curl", ignoreCase = true) -> R.drawable.exercise_leg_curl
+    name.contains("leg extension", ignoreCase = true) -> R.drawable.exercise_leg_extension
+    name.contains("incline bicep", ignoreCase = true) -> R.drawable.exercise_incline_biceps_curl
+    name.contains("lounge squat", ignoreCase = true) || name.contains("lunge squat", ignoreCase = true) -> R.drawable.exercise_lunge_squat
+    name.contains("calf raise", ignoreCase = true) -> R.drawable.exercise_leg_press_calf_raise
+    name.contains("bosu", ignoreCase = true) && name.contains("leg raise", ignoreCase = true) -> R.drawable.exercise_bosu_leg_raise
+    name.contains("kneeling crunch", ignoreCase = true) -> R.drawable.exercise_cable_kneeling_crunch
+    name.contains("leg press", ignoreCase = true) -> R.drawable.exercise_leg_press
     else -> null
 }
 
