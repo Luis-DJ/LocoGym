@@ -11,6 +11,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luis.locogym.LocoGymViewModel
 import com.luis.locogym.R
@@ -53,6 +55,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 private enum class HomeSection { TEMPLATES, HISTORY, PROGRESS }
 private enum class AlertMode { SOUND, VIBRATION, BOTH }
@@ -75,6 +79,67 @@ private data class ExerciseRun(
     val exercise: TemplateExercise,
     val sets: List<SetRun>
 )
+
+private data class ActiveWorkoutDraft(
+    val templateId: Long,
+    val startedAt: Long,
+    val setsByExercise: List<List<SetRun>>
+)
+
+private const val ACTIVE_WORKOUT_DRAFT_KEY = "active_workout_draft_v1"
+
+private fun newActiveWorkoutDraft(workout: TemplateWithExercises): ActiveWorkoutDraft =
+    ActiveWorkoutDraft(
+        templateId = workout.template.id,
+        startedAt = System.currentTimeMillis(),
+        setsByExercise = workout.orderedExercises.map { exercise ->
+            List(exercise.targetSets) {
+                SetRun(
+                    weightKg = exercise.targetWeightKg?.clean().orEmpty(),
+                    reps = exercise.targetReps.toString()
+                )
+            }
+        }
+    )
+
+private fun ActiveWorkoutDraft.toJson(): String = JSONObject().apply {
+    put("templateId", templateId)
+    put("startedAt", startedAt)
+    put("exercises", JSONArray().apply {
+        setsByExercise.forEach { sets ->
+            put(JSONArray().apply {
+                sets.forEach { set ->
+                    put(JSONObject().apply {
+                        put("weightKg", set.weightKg)
+                        put("reps", set.reps)
+                        put("completedAt", set.completedAt ?: JSONObject.NULL)
+                    })
+                }
+            })
+        }
+    })
+}.toString()
+
+private fun readActiveWorkoutDraft(preferences: android.content.SharedPreferences): ActiveWorkoutDraft? =
+    runCatching {
+        val root = JSONObject(preferences.getString(ACTIVE_WORKOUT_DRAFT_KEY, null) ?: return null)
+        val exercises = root.getJSONArray("exercises")
+        ActiveWorkoutDraft(
+            templateId = root.getLong("templateId"),
+            startedAt = root.getLong("startedAt"),
+            setsByExercise = List(exercises.length()) { exerciseIndex ->
+                val sets = exercises.getJSONArray(exerciseIndex)
+                List(sets.length()) { setIndex ->
+                    val set = sets.getJSONObject(setIndex)
+                    SetRun(
+                        weightKg = set.optString("weightKg"),
+                        reps = set.optString("reps"),
+                        completedAt = if (set.isNull("completedAt")) null else set.getLong("completedAt")
+                    )
+                }
+            }
+        )
+    }.getOrNull()
 
 @Composable
 fun LocoGymApp(viewModel: LocoGymViewModel) {
@@ -112,7 +177,20 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
     var editing by remember { mutableStateOf<TemplateWithExercises?>(null) }
     var editorOpen by rememberSaveable { mutableStateOf(false) }
     var activeWorkout by remember { mutableStateOf<TemplateWithExercises?>(null) }
+    var activeDraft by remember { mutableStateOf(readActiveWorkoutDraft(preferences)) }
     var viewedWorkout by remember { mutableStateOf<TemplateWithExercises?>(null) }
+
+    fun saveActiveDraft(draft: ActiveWorkoutDraft?) {
+        activeDraft = draft
+        if (draft == null) preferences.edit().remove(ACTIVE_WORKOUT_DRAFT_KEY).commit()
+        else preferences.edit().putString(ACTIVE_WORKOUT_DRAFT_KEY, draft.toJson()).commit()
+    }
+
+    LaunchedEffect(templates, activeDraft?.templateId) {
+        if (activeWorkout == null && activeDraft != null) {
+            activeWorkout = templates.firstOrNull { it.template.id == activeDraft!!.templateId }
+        }
+    }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -120,7 +198,12 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                 ActiveWorkoutScreen(
                     workout = activeWorkout!!,
                     alertMode = alertMode,
-                    onCancel = { activeWorkout = null },
+                    restoredDraft = activeDraft,
+                    onDraftChange = ::saveActiveDraft,
+                    onCancel = {
+                        saveActiveDraft(null)
+                        activeWorkout = null
+                    },
                     onFinish = { startedAt, completed, completedAsPlanned ->
                         viewModel.finishSession(
                             templateId = activeWorkout!!.template.id,
@@ -129,6 +212,7 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                             completedAsPlanned = completedAsPlanned,
                             exercises = completed
                         )
+                        saveActiveDraft(null)
                         activeWorkout = null
                         section = HomeSection.HISTORY
                     }
@@ -146,7 +230,11 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                 WorkoutDetailScreen(
                     workout = viewedWorkout!!,
                     onBack = { viewedWorkout = null },
-                    onStart = { activeWorkout = viewedWorkout },
+                    onStart = {
+                        val workout = viewedWorkout!!
+                        saveActiveDraft(newActiveWorkoutDraft(workout))
+                        activeWorkout = workout
+                    },
                     onEdit = {
                         editing = viewedWorkout
                         viewedWorkout = null
@@ -270,7 +358,7 @@ private fun HomeScreen(
             )
             HomeSection.PROGRESS -> ProgressScreen(analytics, Modifier.weight(1f))
         }
-        Text("v0.6.0-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.7.2-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -352,6 +440,7 @@ private fun WorkoutDetailScreen(
     onStart: () -> Unit,
     onEdit: () -> Unit
 ) {
+    var openedExercise by remember { mutableStateOf<TemplateExercise?>(null) }
     Column(
         Modifier
             .fillMaxSize()
@@ -397,7 +486,7 @@ private fun WorkoutDetailScreen(
                 Text("Exercises", style = MaterialTheme.typography.titleLarge)
             }
             items(workout.orderedExercises, key = { it.id }) { exercise ->
-                Card(Modifier.fillMaxWidth()) {
+                Card(onClick = { openedExercise = exercise }, modifier = Modifier.fillMaxWidth()) {
                     Row(
                         Modifier.fillMaxWidth().padding(10.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -419,10 +508,58 @@ private fun WorkoutDetailScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        Text("›", style = MaterialTheme.typography.headlineSmall)
                     }
                 }
             }
             item { Spacer(Modifier.height(8.dp)) }
+        }
+    }
+    openedExercise?.let { exercise ->
+        ExercisePreviewDialog(exercise = exercise, onDismiss = { openedExercise = null })
+    }
+}
+
+@Composable
+private fun ExercisePreviewDialog(exercise: TemplateExercise, onDismiss: () -> Unit) {
+    val isPallof = exercise.name.contains("pallof", ignoreCase = true)
+    var extended by remember { mutableStateOf(false) }
+    LaunchedEffect(isPallof) {
+        if (isPallof) {
+            while (true) {
+                delay(if (extended) 1_200 else 900)
+                extended = !extended
+            }
+        }
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(exercise.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Crossfade(
+                    targetState = isPallof && extended,
+                    label = "Pallof demonstration"
+                ) { showExtended ->
+                    WorkoutImage(
+                        resourceId = if (isPallof) {
+                            if (showExtended) R.drawable.exercise_robot_pallof_extended
+                            else R.drawable.exercise_robot_pallof_start
+                        } else exerciseImageResource(exercise.name),
+                        contentDescription = "${exercise.name} demonstration",
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1f)
+                    )
+                }
+                if (isPallof) {
+                    Text(
+                        if (extended) "Hold — resist rotation" else "Start at the chest",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                val weight = exercise.targetWeightKg?.let { " @ ${it.clean()} kg" }.orEmpty()
+                Text("Target ${exercise.targetSets} × ${exercise.targetReps}$weight • ${exercise.restSeconds}s rest")
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Close") }
+            }
         }
     }
 }
@@ -465,15 +602,15 @@ private fun workoutCoverResource(name: String): Int = when {
 }
 
 private fun exerciseImageResource(name: String): Int? = when {
-    name.contains("shoulder press", ignoreCase = true) -> R.drawable.exercise_shoulder_press
-    name.contains("lat pulldown", ignoreCase = true) -> R.drawable.exercise_lat_pulldown
-    name.contains("bench press", ignoreCase = true) -> R.drawable.exercise_bench_press
-    name.contains("seated row", ignoreCase = true) -> R.drawable.exercise_seated_row
+    name.contains("shoulder press", ignoreCase = true) -> R.drawable.exercise_robot_shoulder_press
+    name.contains("lat pulldown", ignoreCase = true) -> R.drawable.exercise_robot_lat_pulldown
+    name.contains("bench press", ignoreCase = true) -> R.drawable.exercise_mature_bench_press
+    name.contains("seated row", ignoreCase = true) -> R.drawable.exercise_mature_seated_row
     name.contains("chest fly", ignoreCase = true) && name.contains("machine", ignoreCase = true) -> R.drawable.exercise_machine_chest_fly
     name.contains("chest fly", ignoreCase = true) -> R.drawable.exercise_dumbbell_chest_fly
     name.contains("tricep pushdown", ignoreCase = true) -> R.drawable.exercise_triceps_pushdown
     name.contains("flat bar biceps", ignoreCase = true) -> R.drawable.exercise_cable_biceps_curl
-    name.contains("pallof", ignoreCase = true) -> R.drawable.exercise_pallof_press
+    name.contains("pallof", ignoreCase = true) -> R.drawable.exercise_robot_pallof_extended
     name.contains("leg curl", ignoreCase = true) -> R.drawable.exercise_leg_curl
     name.contains("leg extension", ignoreCase = true) -> R.drawable.exercise_leg_extension
     name.contains("incline bicep", ignoreCase = true) -> R.drawable.exercise_incline_biceps_curl
@@ -481,7 +618,7 @@ private fun exerciseImageResource(name: String): Int? = when {
     name.contains("calf raise", ignoreCase = true) -> R.drawable.exercise_leg_press_calf_raise
     name.contains("bosu", ignoreCase = true) && name.contains("leg raise", ignoreCase = true) -> R.drawable.exercise_bosu_leg_raise
     name.contains("kneeling crunch", ignoreCase = true) -> R.drawable.exercise_cable_kneeling_crunch
-    name.contains("leg press", ignoreCase = true) -> R.drawable.exercise_leg_press
+    name.contains("leg press", ignoreCase = true) -> R.drawable.exercise_robot_leg_press
     else -> null
 }
 
@@ -629,29 +766,49 @@ private fun ExerciseDraftEditor(
 private fun ActiveWorkoutScreen(
     workout: TemplateWithExercises,
     alertMode: AlertMode,
+    restoredDraft: ActiveWorkoutDraft?,
+    onDraftChange: (ActiveWorkoutDraft) -> Unit,
     onCancel: () -> Unit,
     onFinish: (Long, List<CompletedExerciseInput>, Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val startedAt = remember(workout.template.id) { System.currentTimeMillis() }
+    val startedAt = remember(workout.template.id) {
+        restoredDraft?.takeIf { it.templateId == workout.template.id }?.startedAt
+            ?: System.currentTimeMillis()
+    }
     var runs by remember(workout.template.id) {
-        mutableStateOf(workout.orderedExercises.map { exercise ->
+        mutableStateOf(workout.orderedExercises.mapIndexed { index, exercise ->
+            val restoredSets = restoredDraft
+                ?.takeIf { it.templateId == workout.template.id }
+                ?.setsByExercise
+                ?.getOrNull(index)
             ExerciseRun(
                 exercise = exercise,
-                sets = List(exercise.targetSets) {
-                    SetRun(
-                        weightKg = exercise.targetWeightKg?.clean().orEmpty(),
-                        reps = exercise.targetReps.toString()
-                    )
-                }
+                sets = restoredSets?.takeIf { it.size == exercise.targetSets }
+                    ?: List(exercise.targetSets) {
+                        SetRun(
+                            weightKg = exercise.targetWeightKg?.clean().orEmpty(),
+                            reps = exercise.targetReps.toString()
+                        )
+                    }
             )
         })
     }
     var timerRemaining by rememberSaveable(workout.template.id) { mutableIntStateOf(0) }
     var timerRunning by rememberSaveable(workout.template.id) { mutableStateOf(false) }
     var confirmPartialFinish by rememberSaveable(workout.template.id) { mutableStateOf(false) }
+    var confirmCancel by rememberSaveable(workout.template.id) { mutableStateOf(false) }
+    LaunchedEffect(runs, startedAt) {
+        onDraftChange(
+            ActiveWorkoutDraft(
+                templateId = workout.template.id,
+                startedAt = startedAt,
+                setsByExercise = runs.map { it.sets }
+            )
+        )
+    }
     LaunchedEffect(timerRunning, timerRemaining) {
         if (timerRunning && timerRemaining > 0) {
             delay(1_000)
@@ -700,7 +857,7 @@ private fun ActiveWorkoutScreen(
                 Text(workout.template.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("$completedCount of $totalCount sets completed")
             }
-            TextButton(onClick = onCancel) { Text("Cancel") }
+            TextButton(onClick = { confirmCancel = true }) { Text("Cancel") }
         }
 
         Card(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
@@ -820,6 +977,22 @@ private fun ActiveWorkoutScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmPartialFinish = false }) { Text("Keep working") }
+            }
+        )
+    }
+    if (confirmCancel) {
+        AlertDialog(
+            onDismissRequest = { confirmCancel = false },
+            title = { Text("Discard this workout?") },
+            text = { Text("Completed sets and entered values will be removed. Closing or locking the phone does not discard the workout.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmCancel = false
+                    onCancel()
+                }) { Text("Discard workout") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmCancel = false }) { Text("Keep workout") }
             }
         )
     }
