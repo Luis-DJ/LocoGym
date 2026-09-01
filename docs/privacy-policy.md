@@ -30,7 +30,7 @@ Quiet Robot Studio does not collect, receive or store your personal information 
 
 LocoGym does not include advertising, analytics or user-tracking services.
 
-## Internet access
+## Internet access 
 
 LocoGym does not require Internet access for its normal operation and does not upload your workout information to a server.
 
