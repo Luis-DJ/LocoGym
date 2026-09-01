@@ -50,6 +50,7 @@ import com.luis.locogym.data.SessionSummary
 import com.luis.locogym.data.TemplateExercise
 import com.luis.locogym.data.TemplateWithExercises
 import com.luis.locogym.data.WorkoutAnalytics
+import com.luis.locogym.data.LibraryExercise
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -58,7 +59,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-private enum class HomeSection { TEMPLATES, HISTORY, PROGRESS }
+private enum class HomeSection { TEMPLATES, LIBRARY, HISTORY, PROGRESS }
 private enum class AlertMode { SOUND, VIBRATION, BOTH }
 
 private data class ExerciseDraft(
@@ -144,10 +145,12 @@ private fun readActiveWorkoutDraft(preferences: android.content.SharedPreference
 @Composable
 fun LocoGymApp(viewModel: LocoGymViewModel) {
     val templates by viewModel.templates.collectAsStateWithLifecycle()
+    val exerciseLibrary by viewModel.exerciseLibrary.collectAsStateWithLifecycle()
     val entries by viewModel.entries.collectAsStateWithLifecycle()
     val sessionHistory by viewModel.sessionHistory.collectAsStateWithLifecycle()
     val analytics by viewModel.analytics.collectAsStateWithLifecycle()
     val importMessage by viewModel.importMessage.collectAsStateWithLifecycle()
+    val libraryMessage by viewModel.libraryMessage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("locogym_settings", Context.MODE_PRIVATE) }
     var alertMode by rememberSaveable {
@@ -220,6 +223,7 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
             } else if (editorOpen) {
                 TemplateEditor(
                     existing = editing,
+                    exerciseLibrary = exerciseLibrary,
                     onCancel = { editorOpen = false },
                     onSave = { name, description, exercises ->
                         viewModel.saveTemplate(editing?.template, name, description, exercises)
@@ -246,6 +250,7 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                     section = section,
                     onSectionChange = { section = it },
                     templates = templates,
+                    exerciseLibrary = exerciseLibrary,
                     entries = entries,
                     sessionHistory = sessionHistory,
                     analytics = analytics,
@@ -267,7 +272,11 @@ fun LocoGymApp(viewModel: LocoGymViewModel) {
                             jsonExportLauncher.launch("locogym-history.json")
                         }
                     },
-                    onClearHistory = viewModel::clearHistory
+                    onClearHistory = viewModel::clearHistory,
+                    libraryMessage = libraryMessage,
+                    onSaveLibraryExercise = viewModel::saveLibraryExercise,
+                    onSetLibraryArchived = viewModel::setLibraryExerciseArchived,
+                    onDismissLibraryMessage = viewModel::clearLibraryMessage
                 )
             }
         }
@@ -290,6 +299,7 @@ private fun HomeScreen(
     section: HomeSection,
     onSectionChange: (HomeSection) -> Unit,
     templates: List<TemplateWithExercises>,
+    exerciseLibrary: List<LibraryExercise>,
     entries: List<ExerciseEntry>,
     sessionHistory: List<SessionSummary>,
     analytics: WorkoutAnalytics,
@@ -301,7 +311,11 @@ private fun HomeScreen(
     onAlertSettings: () -> Unit,
     onExportCsv: () -> Unit,
     onExportJson: () -> Unit,
-    onClearHistory: () -> Unit
+    onClearHistory: () -> Unit,
+    libraryMessage: String?,
+    onSaveLibraryExercise: (LibraryExercise) -> Unit,
+    onSetLibraryArchived: (LibraryExercise, Boolean) -> Unit,
+    onDismissLibraryMessage: () -> Unit
 ) {
     Column(
         Modifier
@@ -320,22 +334,35 @@ private fun HomeScreen(
             TextButton(onClick = onAlertSettings) { Text("Timer alert") }
         }
         Spacer(Modifier.height(18.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
             FilterChip(
                 selected = section == HomeSection.TEMPLATES,
                 onClick = { onSectionChange(HomeSection.TEMPLATES) },
                 label = { Text("My Workouts") }
             )
+            }
+            item {
+                FilterChip(
+                    selected = section == HomeSection.LIBRARY,
+                    onClick = { onSectionChange(HomeSection.LIBRARY) },
+                    label = { Text("Exercises") }
+                )
+            }
+            item {
             FilterChip(
                 selected = section == HomeSection.HISTORY,
                 onClick = { onSectionChange(HomeSection.HISTORY) },
                 label = { Text("History") }
             )
+            }
+            item {
             FilterChip(
                 selected = section == HomeSection.PROGRESS,
                 onClick = { onSectionChange(HomeSection.PROGRESS) },
                 label = { Text("Progress") }
             )
+            }
         }
         Spacer(Modifier.height(12.dp))
         when (section) {
@@ -356,11 +383,182 @@ private fun HomeScreen(
                 onClearHistory = onClearHistory,
                 modifier = Modifier.weight(1f)
             )
+            HomeSection.LIBRARY -> ExerciseLibraryScreen(
+                exercises = exerciseLibrary,
+                message = libraryMessage,
+                onSave = onSaveLibraryExercise,
+                onSetArchived = onSetLibraryArchived,
+                onDismissMessage = onDismissLibraryMessage,
+                modifier = Modifier.weight(1f)
+            )
             HomeSection.PROGRESS -> ProgressScreen(analytics, Modifier.weight(1f))
         }
-        Text("v0.7.2-dev • stored only on this device", style = MaterialTheme.typography.labelSmall)
+        Text("v0.9.0-beta01 • stored only on this device", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(20.dp))
     }
+}
+
+@Composable
+private fun ExerciseLibraryScreen(
+    exercises: List<LibraryExercise>,
+    message: String?,
+    onSave: (LibraryExercise) -> Unit,
+    onSetArchived: (LibraryExercise, Boolean) -> Unit,
+    onDismissMessage: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var search by rememberSaveable { mutableStateOf("") }
+    var showArchived by rememberSaveable { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<LibraryExercise?>(null) }
+    var creating by rememberSaveable { mutableStateOf(false) }
+    val visible = exercises.filter {
+        (showArchived || !it.archived) && it.name.contains(search.trim(), ignoreCase = true)
+    }
+    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text("Exercise Library", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Your exercises and reusable defaults",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Button(onClick = { creating = true }) { Text("New") }
+            }
+        }
+        item {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                label = { Text("Search exercises") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = showArchived, onCheckedChange = { showArchived = it })
+                Text("Show archived")
+            }
+        }
+        if (message != null) {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(message, modifier = Modifier.weight(1f))
+                        TextButton(onClick = onDismissMessage) { Text("Dismiss") }
+                    }
+                }
+            }
+        }
+        if (visible.isEmpty()) {
+            item { Text(if (search.isBlank()) "No exercises here yet." else "No matching exercises.") }
+        }
+        items(visible, key = { it.id }) { exercise ->
+            Card(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    WorkoutImage(
+                        resourceId = exerciseImageResource(exercise.name),
+                        contentDescription = "${exercise.name} illustration",
+                        fallbackText = exercise.name.take(1).uppercase(),
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(exercise.name, fontWeight = FontWeight.SemiBold)
+                        val weight = exercise.defaultWeightKg?.let { " @ ${it.clean()} kg" }.orEmpty()
+                        Text("${exercise.defaultSets} × ${exercise.defaultReps}$weight • ${exercise.defaultRestSeconds}s")
+                        if (exercise.archived) Text("Archived", color = MaterialTheme.colorScheme.tertiary)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        TextButton(onClick = { editing = exercise }) { Text("Edit") }
+                        TextButton(onClick = { onSetArchived(exercise, !exercise.archived) }) {
+                            Text(if (exercise.archived) "Restore" else "Archive")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (creating || editing != null) {
+        LibraryExerciseDialog(
+            existing = editing,
+            onDismiss = { creating = false; editing = null },
+            onSave = {
+                onSave(it)
+                creating = false
+                editing = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun LibraryExerciseDialog(
+    existing: LibraryExercise?,
+    onDismiss: () -> Unit,
+    onSave: (LibraryExercise) -> Unit
+) {
+    var name by remember(existing?.id) { mutableStateOf(existing?.name.orEmpty()) }
+    var weight by remember(existing?.id) { mutableStateOf(existing?.defaultWeightKg?.clean().orEmpty()) }
+    var sets by remember(existing?.id) { mutableStateOf(existing?.defaultSets?.toString() ?: "3") }
+    var reps by remember(existing?.id) { mutableStateOf(existing?.defaultReps?.toString() ?: "10") }
+    var rest by remember(existing?.id) { mutableStateOf(existing?.defaultRestSeconds?.toString() ?: "60") }
+    val valid = name.isNotBlank() && (weight.isBlank() || weight.toDoubleOrNull()?.let { it >= 0 } == true) &&
+        sets.toIntOrNull()?.let { it > 0 } == true && reps.toIntOrNull()?.let { it > 0 } == true &&
+        rest.toIntOrNull()?.let { it in 1..3600 } == true
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "New exercise" else "Edit exercise") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Exercise name") }, singleLine = true)
+                DecimalField("Default weight kg (optional)", weight, { weight = it }, Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IntegerField("Sets", sets, { sets = it }, Modifier.weight(1f))
+                    IntegerField("Reps", reps, { reps = it }, Modifier.weight(1f))
+                }
+                IntegerField("Rest seconds", rest, { rest = it }, Modifier.fillMaxWidth())
+                Text(
+                    "Defaults save typing. Each workout can override them.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = valid,
+                onClick = {
+                    onSave(
+                        (existing ?: LibraryExercise(
+                            name = name,
+                            defaultWeightKg = null,
+                            defaultSets = 3,
+                            defaultReps = 10,
+                            defaultRestSeconds = 60
+                        )).copy(
+                            name = name.trim(),
+                            normalizedName = name.trim().lowercase(),
+                            defaultWeightKg = weight.toDoubleOrNull(),
+                            defaultSets = sets.toInt(),
+                            defaultReps = reps.toInt(),
+                            defaultRestSeconds = rest.toInt()
+                        )
+                    )
+                }
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable
@@ -602,6 +800,10 @@ private fun workoutCoverResource(name: String): Int = when {
 }
 
 private fun exerciseImageResource(name: String): Int? = when {
+    name.equals("Bench Press", ignoreCase = true) -> R.drawable.exercise_robot_barbell_bench_press
+    name.contains("assisted chin", ignoreCase = true) -> R.drawable.exercise_robot_assisted_chin_up
+    name.contains("woodchop", ignoreCase = true) || name.contains("wood chop", ignoreCase = true) ->
+        R.drawable.exercise_robot_horizontal_woodchop
     name.contains("shoulder press", ignoreCase = true) -> R.drawable.exercise_robot_shoulder_press
     name.contains("lat pulldown", ignoreCase = true) -> R.drawable.exercise_robot_lat_pulldown
     name.contains("bench press", ignoreCase = true) -> R.drawable.exercise_mature_bench_press
@@ -625,9 +827,11 @@ private fun exerciseImageResource(name: String): Int? = when {
 @Composable
 private fun TemplateEditor(
     existing: TemplateWithExercises?,
+    exerciseLibrary: List<LibraryExercise>,
     onCancel: () -> Unit,
     onSave: (String, String, List<TemplateExercise>) -> Unit
 ) {
+    var libraryOpen by rememberSaveable(existing?.template?.id) { mutableStateOf(false) }
     var name by remember(existing?.template?.id) { mutableStateOf(existing?.template?.name.orEmpty()) }
     var description by remember(existing?.template?.id) { mutableStateOf(existing?.template?.description.orEmpty()) }
     var exercises by remember(existing?.template?.id) {
@@ -691,10 +895,10 @@ private fun TemplateEditor(
                 )
             }
             item {
-                OutlinedButton(
-                    onClick = { exercises = exercises + ExerciseDraft() },
+                Button(
+                    onClick = { libraryOpen = true },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Add exercise") }
+                ) { Text("Add from Exercise Library") }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -719,6 +923,79 @@ private fun TemplateEditor(
         }
         Spacer(Modifier.height(20.dp))
     }
+    if (libraryOpen) {
+        AddFromLibraryDialog(
+            exercises = exerciseLibrary.filter { !it.archived },
+            alreadyAdded = exercises.map { it.name.trim().lowercase() }.toSet(),
+            onAdd = { item ->
+                exercises = exercises + ExerciseDraft(
+                    name = item.name,
+                    weightKg = item.defaultWeightKg?.clean().orEmpty(),
+                    sets = item.defaultSets.toString(),
+                    reps = item.defaultReps.toString(),
+                    restSeconds = item.defaultRestSeconds.toString()
+                )
+            },
+            onDismiss = { libraryOpen = false }
+        )
+    }
+}
+
+@Composable
+private fun AddFromLibraryDialog(
+    exercises: List<LibraryExercise>,
+    alreadyAdded: Set<String>,
+    onAdd: (LibraryExercise) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var search by rememberSaveable { mutableStateOf("") }
+    val visible = exercises.filter { it.name.contains(search.trim(), ignoreCase = true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add exercises") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    label = { Text("Search library") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (visible.isEmpty()) {
+                    Text("No matching active exercises. Create or restore one in Exercises.")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(visible, key = { it.id }) { item ->
+                            val added = item.normalizedName in alreadyAdded
+                            Card(
+                                onClick = { if (!added) onAdd(item) },
+                                enabled = !added,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(item.name, fontWeight = FontWeight.SemiBold)
+                                        val weight = item.defaultWeightKg?.let { " @ ${it.clean()} kg" }.orEmpty()
+                                        Text("${item.defaultSets} × ${item.defaultReps}$weight • ${item.defaultRestSeconds}s")
+                                    }
+                                    Text(if (added) "Added" else "Add", color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
 }
 
 @Composable

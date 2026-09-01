@@ -14,15 +14,17 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TemplateExercise::class,
         WorkoutSession::class,
         SessionExercise::class,
-        SessionSet::class
+        SessionSet::class,
+        LibraryExercise::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class LocoGymDatabase : RoomDatabase() {
     abstract fun exerciseDao(): ExerciseDao
     abstract fun templateDao(): TemplateDao
     abstract fun sessionDao(): SessionDao
+    abstract fun libraryExerciseDao(): LibraryExerciseDao
 
     companion object {
         @Volatile private var instance: LocoGymDatabase? = null
@@ -33,7 +35,7 @@ abstract class LocoGymDatabase : RoomDatabase() {
                     context.applicationContext,
                     LocoGymDatabase::class.java,
                     "locogym.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                     .also { instance = it }
             }
@@ -129,6 +131,37 @@ abstract class LocoGymDatabase : RoomDatabase() {
                 database.execSQL(
                     "ALTER TABLE `workout_sessions` ADD COLUMN " +
                         "`completedAsPlanned` INTEGER NOT NULL DEFAULT 1"
+                )
+            }
+        }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `library_exercises` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `normalizedName` TEXT NOT NULL,
+                        `defaultWeightKg` REAL,
+                        `defaultSets` INTEGER NOT NULL,
+                        `defaultReps` INTEGER NOT NULL,
+                        `defaultRestSeconds` INTEGER NOT NULL,
+                        `archived` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL
+                    )""".trimIndent()
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_library_exercises_normalizedName` " +
+                        "ON `library_exercises` (`normalizedName`)"
+                )
+                database.execSQL(
+                    """INSERT OR IGNORE INTO library_exercises
+                        (name, normalizedName, defaultWeightKg, defaultSets, defaultReps,
+                         defaultRestSeconds, archived, createdAt)
+                        SELECT name, lower(trim(name)), targetWeightKg, targetSets, targetReps,
+                               restSeconds, 0, CAST(strftime('%s','now') AS INTEGER) * 1000
+                        FROM template_exercises
+                        GROUP BY lower(trim(name))""".trimIndent()
                 )
             }
         }

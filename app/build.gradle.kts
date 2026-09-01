@@ -5,6 +5,17 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
+val releaseStoreFile = providers.environmentVariable("LOCOGYM_KEYSTORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("LOCOGYM_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("LOCOGYM_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("LOCOGYM_KEY_PASSWORD").orNull
+val releaseSigningAvailable = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.luis.locogym"
     compileSdk = 35
@@ -13,15 +24,28 @@ android {
         applicationId = "com.luis.locogym"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.7.2-dev"
+        versionCode = 16
+        versionName = "0.9.0-beta01"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (releaseSigningAvailable) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseStoreFile))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
